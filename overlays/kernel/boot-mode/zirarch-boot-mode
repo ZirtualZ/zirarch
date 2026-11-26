@@ -24,16 +24,21 @@ case "$mode" in
 		done
 		;;
 	tty)
-		rc-service buffyboard start
-		printf '\033[2J\033[H' > /dev/tty1
-		chvt 2
-		chvt 1
-		start-stop-daemon --start --background --make-pidfile \
-			--pidfile /run/zirarch-tty1.pid \
-			--exec /sbin/getty -- 38400 tty1 linux
-		while :; do
-			sleep 3600
-		done
+		if rc-service buffyboard start 2>/dev/null; then
+			printf '\033[2J\033[H' > /dev/tty1
+			chvt 2
+			chvt 1
+			getty=/sbin/getty
+			[ -x "$getty" ] || getty=/sbin/agetty
+			start-stop-daemon --start --background --make-pidfile \
+				--pidfile /run/zirarch-tty1.pid \
+				--exec "$getty" -- 38400 tty1 linux
+			while :; do
+				sleep 3600
+			done
+		else
+			exec /usr/bin/zirarch-fbconsole
+		fi
 		;;
 	*)
 		echo "zirarch-boot-mode: invalid mode: $mode" >&2

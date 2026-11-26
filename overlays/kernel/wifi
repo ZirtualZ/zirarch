@@ -145,7 +145,13 @@ connect_wifi()
 	trap - EXIT INT TERM
 
 	echo "Connected. Requesting DHCP lease..."
-	udhcpc -q -n -i "$interface" -t 3 -T 3 ||
+	if command -v udhcpc >/dev/null 2>&1; then
+		udhcpc -q -n -i "$interface" -t 3 -T 3
+	elif command -v dhclient >/dev/null 2>&1; then
+		dhclient -v "$interface"
+	else
+		fail "no DHCP client is installed"
+	fi ||
 		fail "connected, but DHCP did not obtain a lease"
 	echo "Wi-Fi ready."
 }

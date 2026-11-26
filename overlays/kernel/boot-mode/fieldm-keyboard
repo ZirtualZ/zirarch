@@ -18,7 +18,14 @@ reconcile()
 		pid=
 		[ -s "$pidfile" ] && read -r pid < "$pidfile"
 		if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-			svkbd-mobile-intl -d -g 720x300+0-0 &
+			if command -v svkbd-mobile-intl >/dev/null 2>&1; then
+				svkbd-mobile-intl -d -g 720x300+0-0 &
+			elif command -v onboard >/dev/null 2>&1; then
+				onboard --layout Phone --size 720x300 --x 0 --y 980 &
+			else
+				echo "fieldm-keyboard: no on-screen keyboard is installed" >&2
+				exit 1
+			fi
 			echo $! > "$pidfile"
 		fi
 	else

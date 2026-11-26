@@ -152,3 +152,15 @@ index 84b88f109..9684a2269 100755
  fi
  
  echo "$res"
+diff --git a/arch/arm/configs/lineage-on5ltetmo_defconfig b/arch/arm/configs/lineage-on5ltetmo_defconfig
+--- a/arch/arm/configs/lineage-on5ltetmo_defconfig
++++ b/arch/arm/configs/lineage-on5ltetmo_defconfig
+@@ -3229,7 +3229,7 @@ CONFIG_ZSMALLOC_STAT=y
+ #
+ # Triggers - standalone
+ #
+ # CONFIG_IIO_SIMPLE_DUMMY is not set
+-# CONFIG_ZRAM is not set
++CONFIG_ZRAM=y
+ # CONFIG_BCM_WIMAX is not set
+ # CONFIG_FT1000 is not set
