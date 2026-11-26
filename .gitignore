@@ -10,11 +10,11 @@
 
 # Bootstrapped external source checkouts
 /kernel/
-/FieldM/
 /pmaports/
 /tools-pmbootstrap/
 /arm-eabi-4.8/
 /.venv-pmbootstrap/
+*.armv7
 
 # Local credentials and session state
 /.*known-hosts*

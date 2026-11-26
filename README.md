@@ -20,8 +20,10 @@ and project overlays needed to reconstruct the build.
 ./bootstrap.sh
 ```
 
-This checks out the exact kernel, FieldM, and Android ARM toolchain revisions
-from `SOURCES.lock`, applies `patches/`, and copies `overlays/`.
+This checks out the exact kernel and Android ARM toolchain revisions from
+`SOURCES.lock`, applies `patches/kernel-zirarch.patch`, and copies the kernel
+overlay. FieldM is bundled directly in this repository and is rebuilt in
+place.
 
 To also fetch postmarketOS pmaports and install the local Zirarch port
 recipes:
@@ -110,13 +112,12 @@ binary products (`*.armv7`) are ignored and are not repository inputs.
 ```text
 patches/                  tracked changes against pinned upstreams
 overlays/kernel/          Zirarch build/init/fbconsole/boot-mode sources
-overlays/FieldM/          FieldM files added by the mobile fork
 overlays/pmaports/        SM-G550T postmarketOS recipes
 SOURCES.lock              exact upstream repository revisions
 bootstrap.sh              source checkout and patch application
 build.sh                  kernel/fbconsole/FieldM rebuild entrypoint
-kernel/                   ignored bootstrapped source checkout
-FieldM/                   ignored bootstrapped FieldM checkout
+kernel/                   ignored bootstrapped kernel checkout
+FieldM/                   tracked Zirarch mobile desktop source
 ```
 
 Long-lived hardware and troubleshooting notes are in:

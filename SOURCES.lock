@@ -1,5 +1,4 @@
 # commit repository
 3280d5140d972a331d7d4d496af32fa9ce2d60ba https://github.com/ZirtualZ/android_kernel_samsung_exynos3475-zirarch.git kernel
-f299904b5b58001f1647d562a54938159d7254e7 https://github.com/ZirtualZ/Field-Desktop.git FieldM
 26e93f6af47f7bd3a9beb5c102a5f45e19bfa38a https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-eabi-4.8 arm-eabi-4.8
 917fefaba5d2e221473acd96875b0bef8ed43973 https://gitlab.postmarketos.org/postmarketOS/pmaports.git pmaports

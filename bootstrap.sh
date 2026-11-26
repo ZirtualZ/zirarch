@@ -79,8 +79,6 @@ done < "$LOCK"
 
 apply_overlay "$ROOT/patches/kernel-zirarch.patch" \
 	kernel "$ROOT/overlays/kernel"
-apply_overlay "$ROOT/patches/fieldm-mobile.patch" \
-	FieldM "$ROOT/overlays/FieldM"
 
 if [ "$INCLUDE_PMAPORTS" -eq 1 ]; then
 	cp -a "$ROOT/overlays/pmaports/." "$ROOT/pmaports/"
