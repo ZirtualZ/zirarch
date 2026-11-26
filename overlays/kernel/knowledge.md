@@ -703,12 +703,9 @@ about 60 Hz while FieldM is active. Without this DECON update, X draws
 correctly in framebuffer RAM but the physical panel remains stale or
 blank. The refresh service is started and stopped with the X session.
 
-FieldM is checked out at `FieldM/` from:
-
-```text
-https://github.com/ZirtualZ/Field-Desktop
-f299904b5b58001f1647d562a54938159d7254e7
-```
+FieldM is bundled directly in the tracked `FieldM/` directory. Its
+source is part of the Zirarch repository rather than a bootstrapped
+checkout.
 
 The fork removes desktop-item and multi-monitor modules and introduces
 single-screen `screen_layout`. It targets one 720x1280 portrait screen,
