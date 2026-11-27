@@ -9,6 +9,9 @@ and drag gestures directly through normal X11 button events.
 ## Features
 
 - GTK shell with a two-button mobile panel and large common launch shortcuts.
+- Cyber-minimal 720x1280 FieldM redesign with a 48px status bar and 68px
+  thumb dock. The shell uses flat `#0D1015`, `#11151C`, `#21262D`, and
+  `#00E5A8` colors, with no blur, shadows, or animations.
 - Searchable application launcher, including the window manager's `Alt+Space`
   shortcut and single-tap activation.
 - Window manager with large title bars and close targets, portrait-screen

@@ -403,6 +403,9 @@ is sized to that terminal region rather than the full physical display.
 the alphabetic layout. `CTRL` is a one-shot modifier: tap it and then a
 letter to send ASCII control codes (for example, `CTRL` then `C` sends
 SIGINT to a terminal process). The modifier resets after one key.
+`A-` zooms out to a 1× text grid (90 columns), and `A+` zooms back in
+to the 2× text grid (45 columns). The PTY is resized at the same time,
+so `neofetch`, `fastfetch`, and wide command output can fit.
 
 Touch handling:
 

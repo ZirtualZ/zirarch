@@ -15,6 +15,7 @@
 #endif
 #include <X11/Xlib.h>
 #include <sys/types.h>
+#include <glib.h>
 
 enum {
     SHELL_MAX_APPLICATIONS = 512,
@@ -24,7 +25,8 @@ enum {
     SHELL_ACTION_FILES,
     SHELL_ACTION_BROWSER,
     SHELL_ACTION_KEYBOARD,
-    SHELL_ACTION_SETTINGS
+    SHELL_ACTION_SETTINGS,
+    SHELL_ACTION_PACKAGES
 };
 
 typedef struct {
@@ -64,6 +66,12 @@ typedef struct {
     guint x_source;
     guint wm_source;
     guint status_source;
+    GtkWidget *status_network;
+    GtkWidget *status_clock;
+    GtkWidget *status_telemetry;
+    GSubprocess *status_wifi_process;
+    guint64 status_cpu_idle;
+    guint64 status_cpu_total;
 } ShellState;
 
 void shell_show_error(GtkWindow *parent, const char *message);

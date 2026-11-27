@@ -22,14 +22,17 @@
 #define HEIGHT 1280
 #define BPP 4
 #define STRIDE (WIDTH * BPP)
-#define SCALE 2
-#define CELL_W (8 * SCALE)
-#define CELL_H (16 * SCALE)
+#define MAX_COLS 90
+#define MAX_ROWS 56
+#define SCALE_MIN 1
+#define SCALE_MAX 2
+#define CELL_W (8 * text_scale)
+#define CELL_H (16 * text_scale)
 #define COLS (WIDTH / CELL_W)
 #define KEYBOARD_ROWS 5
 #define KEY_HEIGHT 76
 #define KEYBOARD_HEIGHT (KEYBOARD_ROWS * KEY_HEIGHT)
-#define ROWS ((HEIGHT - KEYBOARD_HEIGHT) / CELL_H)
+#define ROWS (text_rows())
 #define FBIOGET_VSCREENINFO 0x4600
 #define FBIOGET_FSCREENINFO 0x4602
 #define FBIOPAN_DISPLAY 0x4606
@@ -65,7 +68,7 @@ struct arm_input_event {
 };
 
 static uint8_t *framebuffer;
-static uint8_t cells[ROWS][COLS];
+static uint8_t cells[MAX_ROWS][MAX_COLS];
 static uint16_t cursor_row, cursor_col;
 static int fbfd = -1, master = -1;
 static size_t stride = STRIDE;
@@ -76,6 +79,12 @@ static int touch_x, touch_y, touch_active, touch_slot, touch_handled;
 static int touch_x_min, touch_x_max = 720, touch_y_min, touch_y_max = 1280;
 static int shift_locked, symbols_mode, ctrl_armed;
 static int display_awake = 1;
+static int text_scale = 2;
+
+static int text_rows(void)
+{
+	return (HEIGHT - KEYBOARD_HEIGHT) / (16 * text_scale);
+}
 
 static int refresh(void);
 
@@ -174,10 +183,10 @@ static void draw_cell(int col, int row)
 		for (x = 0; x < 8; x++) {
 			int on = glyph[y] & (0x80 >> x);
 			uint8_t v = on ? 0xff : 0;
-			for (sy = 0; sy < SCALE; sy++)
-				for (sx = 0; sx < SCALE; sx++)
-					pixel(base_x + x * SCALE + sx,
-						base_y + y * SCALE + sy, v, v, v);
+			for (sy = 0; sy < text_scale; sy++)
+				for (sx = 0; sx < text_scale; sx++)
+					pixel(base_x + x * text_scale + sx,
+						base_y + y * text_scale + sy, v, v, v);
 		}
 	}
 }
@@ -189,7 +198,7 @@ static int refresh(void)
 
 static int row_key_count(int row)
 {
-	static const int counts[] = { 10, 10, 9, 9, 4 };
+	static const int counts[] = { 10, 10, 9, 9, 6 };
 	return counts[row];
 }
 
@@ -200,21 +209,21 @@ static const char *key_label(int row, int col)
 		{ "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" },
 		{ "a", "s", "d", "f", "g", "h", "j", "k", "l", NULL },
 		{ "SHF", "z", "x", "c", "v", "b", "n", "m", "BSP" },
-		{ "CTRL", "SYM", "SPACE", "ENTER", NULL, NULL, NULL, NULL, NULL, NULL },
+		{ "CTRL", "SYM", "A-", "A+", "SPACE", "ENTER", NULL, NULL, NULL, NULL },
 	};
 	static const char *shifted[][10] = {
 		{ "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" },
 		{ "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P" },
 		{ "A", "S", "D", "F", "G", "H", "J", "K", "L", NULL },
 		{ "SHF", "Z", "X", "C", "V", "B", "N", "M", "BSP" },
-		{ "CTRL", "SYM", "SPACE", "ENTER", NULL, NULL, NULL, NULL, NULL, NULL },
+		{ "CTRL", "SYM", "A-", "A+", "SPACE", "ENTER", NULL, NULL, NULL, NULL },
 	};
 	static const char *symbols[][10] = {
 		{ "!", "@", "#", "$", "%", "^", "&", "*", "(", ")" },
 		{ "-", "_", "=", "+", "[", "]", "{", "}", "\\", "|" },
 		{ ";", ":", "'", "\"", ",", ".", "/", "?", "`", NULL },
 		{ "ABC", "<", ">", "~", "/", "\\", "|", "_", "BSP" },
-		{ "CTRL", "ABC", "SPACE", "ENTER", NULL, NULL, NULL, NULL, NULL, NULL },
+		{ "CTRL", "ABC", "A-", "A+", "SPACE", "ENTER", NULL, NULL, NULL, NULL },
 	};
 	if (row == 4 && col == 0)
 		return ctrl_armed ? "CTRL*" : "CTRL";
@@ -227,8 +236,8 @@ static void key_geometry(int row, int col, int *x, int *width)
 {
 	int count = row_key_count(row);
 	if (row == 4) {
-		static const int widths[] = { 96, 96, 352, 176 };
-		static const int starts[] = { 0, 96, 192, 544 };
+		static const int widths[] = { 96, 96, 96, 96, 240, 96 };
+		static const int starts[] = { 0, 96, 192, 288, 384, 624 };
 		*x = starts[col];
 		*width = widths[col];
 		return;
@@ -277,8 +286,11 @@ static void clear_screen(void)
 
 static void scroll(void)
 {
-	memmove(cells, cells + 1, sizeof(cells) - sizeof(cells[0]));
-	memset(cells[ROWS - 1], ' ', COLS);
+	int rows = text_rows();
+	int cols = COLS;
+	for (int row = 0; row + 1 < rows; row++)
+		memcpy(cells[row], cells[row + 1], (size_t)cols);
+	memset(cells[rows - 1], ' ', (size_t)cols);
 	redraw();
 }
 
@@ -412,6 +424,38 @@ static void render(const unsigned char *data, size_t length)
 static void send_key(const char *label)
 {
 	char value;
+	if (!strcmp(label, "A-")) {
+		if (text_scale > SCALE_MIN) {
+			text_scale--;
+			cursor_row = cursor_col = 0;
+			clear_screen();
+			struct winsize size = {
+				.ws_row = ROWS,
+				.ws_col = COLS,
+			};
+			if (master >= 0)
+				ioctl(master, TIOCSWINSZ, &size);
+			draw_keyboard();
+			refresh();
+		}
+		return;
+	}
+	if (!strcmp(label, "A+")) {
+		if (text_scale < SCALE_MAX) {
+			text_scale++;
+			cursor_row = cursor_col = 0;
+			clear_screen();
+			struct winsize size = {
+				.ws_row = ROWS,
+				.ws_col = COLS,
+			};
+			if (master >= 0)
+				ioctl(master, TIOCSWINSZ, &size);
+			draw_keyboard();
+			refresh();
+		}
+		return;
+	}
 	if (!strcmp(label, "CTRL")) {
 		ctrl_armed = !ctrl_armed;
 		draw_keyboard();
@@ -844,6 +888,7 @@ static int spawn_login(void)
 		.ws_row = ROWS,
 		.ws_col = COLS,
 	};
+	char columns[16], lines[16];
 	pid_t pid;
 
 	if (openpty_unlocked(&master, &slave, &size) < 0)
@@ -860,8 +905,10 @@ static int spawn_login(void)
 		close(master);
 		close(slave);
 		setenv("TERM", "linux", 1);
-		setenv("COLUMNS", "45", 1);
-		setenv("LINES", "40", 1);
+		snprintf(columns, sizeof(columns), "%d", COLS);
+		snprintf(lines, sizeof(lines), "%d", ROWS);
+		setenv("COLUMNS", columns, 1);
+		setenv("LINES", lines, 1);
 		setenv("HOME", "/root", 1);
 		setenv("USER", "root", 1);
 		setenv("LOGNAME", "root", 1);

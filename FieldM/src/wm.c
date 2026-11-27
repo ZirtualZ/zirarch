@@ -18,14 +18,15 @@
 
 enum {
     MAX_CLIENTS = 128,
-    TITLE_HEIGHT = 64,
+    TITLE_HEIGHT = 48,
     MIN_WIDTH = 240,
     MIN_HEIGHT = 140,
     RESIZE_BORDER = 12,
     SWITCHER_ROWS = 10,
     SWITCHER_WIDTH = 680,
     SWITCHER_ROW_HEIGHT = 64,
-    TASKBAR_HEIGHT = 88,
+    STATUS_HEIGHT = 48,
+    TASKBAR_HEIGHT = 68,
     TASKBAR_BUTTON_MIN_WIDTH = 180,
     TASKBAR_BUTTON_MAX_WIDTH = 320,
     KEYBOARD_HEIGHT = 300
@@ -192,7 +193,7 @@ static int client_is_keyboard(Window window)
 static void place_keyboard_window(Window window)
 {
     int y = screen_layout.y + screen_layout.height -
-            KEYBOARD_HEIGHT - TASKBAR_HEIGHT;
+            KEYBOARD_HEIGHT;
     keyboard_window = window;
     XMoveResizeWindow(display, window, screen_layout.x, y,
                       (unsigned int)screen_layout.width, KEYBOARD_HEIGHT);
@@ -335,25 +336,33 @@ static void allocate_text_color(const char *name, XftColor *color)
     color->color.alpha = 0xffff;
 }
 
-static void taskbar_layout(int width, int *button_width, int *shown,
-                           int *offset)
+static void send_launcher_command(void)
 {
-    int available = width - 24;
-    *button_width = client_count > 0 ? available / client_count : available;
-    if (*button_width < TASKBAR_BUTTON_MIN_WIDTH) {
-        *button_width = TASKBAR_BUTTON_MIN_WIDTH;
+    Atom owner_atom = XInternAtom(display, "_FIELD_DESKTOP_COMMAND_OWNER", False);
+    Atom command_atom = XInternAtom(display, "_FIELD_DESKTOP_COMMAND", False);
+    Window owner = XGetSelectionOwner(display, owner_atom);
+    if (owner == None) {
+        return;
     }
-    if (*button_width > TASKBAR_BUTTON_MAX_WIDTH) {
-        *button_width = TASKBAR_BUTTON_MAX_WIDTH;
+    XEvent message;
+    memset(&message, 0, sizeof(message));
+    message.xclient.type = ClientMessage;
+    message.xclient.window = owner;
+    message.xclient.message_type = command_atom;
+    message.xclient.format = 32;
+    message.xclient.data.l[0] = 1;
+    XSendEvent(display, owner, False, NoEventMask, &message);
+    XFlush(display);
+}
+
+static void toggle_keyboard(void)
+{
+    pid_t child = fork();
+    if (child == 0) {
+        execl("/usr/bin/fieldm-keyboard", "fieldm-keyboard",
+              "manual", "toggle", (char *)NULL);
+        _exit(127);
     }
-    *shown = available / *button_width;
-    if (*shown > client_count) {
-        *shown = client_count;
-    }
-    if (*shown < client_count) {
-        --(*shown);
-    }
-    *offset = 12;
 }
 
 static int find_client(Window window)
@@ -506,7 +515,6 @@ static void maximize_client(int index, int fullscreen)
     managed->y = screen_layout.y;
     managed->width = screen_layout.width - RESIZE_BORDER;
     managed->height = screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER -
-        (taskbar_enabled && !fullscreen ? TASKBAR_HEIGHT : 0) -
         (managed->terminal && focused == index && !fullscreen &&
          terminal_count > 0 ? KEYBOARD_HEIGHT : 0);
     arrange_client(index);
@@ -567,8 +575,7 @@ static void manage_window(Window client)
     managed->x = screen_layout.x;
     managed->y = screen_layout.y;
     managed->width = screen_layout.width - RESIZE_BORDER;
-    managed->height = screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER -
-        (taskbar_enabled ? TASKBAR_HEIGHT : 0);
+    managed->height = screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER;
     if (managed->width < MIN_WIDTH) {
         managed->width = MIN_WIDTH;
     }
@@ -693,72 +700,24 @@ static void draw_taskbar_monitor(void)
     if (window == None || !taskbar_enabled) {
         return;
     }
-    XSetForeground(display, gc, panel_color);
+    XSetForeground(display, gc, named_color("#0D1015"));
     XFillRectangle(display, window, gc, 0, 0,
                    (unsigned int)width, TASKBAR_HEIGHT);
     XSetForeground(display, gc, outline_color);
     XDrawLine(display, window, gc, 0, 0, width, 0);
-    if (client_count == 0) {
-        draw_round_rect(window, 18, 25, 36, 36, 10, active_color);
-        draw_text(window, "No open applications", 70, 53, &muted_xft, 360);
-        return;
-    }
-
-    int button_width;
-    int shown;
-    int offset;
-    taskbar_layout(width, &button_width, &shown, &offset);
-    for (int i = 0; i < shown; ++i) {
-        int x = offset + i * button_width;
-        int card_width = button_width - 8;
-        draw_round_rect(window, x, 5, card_width, TASKBAR_HEIGHT - 10, 9,
-                        i == focused ? button_active_color : button_color);
-        if (i == focused) {
-            draw_round_rect(window, x + 10, TASKBAR_HEIGHT - 10, card_width - 20,
-                            3, 2, accent_xft.pixel);
+    int section_width = width / 3;
+    static const char *labels[] = {"Apps", "Keyboard", "Windows"};
+    for (int i = 0; i < 3; ++i) {
+        int x = i * section_width;
+        draw_round_rect(window, x + 8, 10, section_width - 16, 48, 12,
+                        i == 0 ? button_active_color : button_color);
+        if (i == 0) {
+            XSetForeground(display, gc, accent_xft.pixel);
+            XDrawRectangle(display, window, gc, x + 8, 10,
+                           (unsigned int)(section_width - 16), 48);
         }
-        char *name = NULL;
-        if (!XFetchName(display, clients[i].client, &name) || name == NULL) {
-            name = strdup("Application");
-        }
-        if (name != NULL) {
-            unsigned char first_byte = (unsigned char)name[0];
-            unsigned long mark_color = i == focused
-                ? accent_xft.pixel : muted_xft.pixel;
-            XSetForeground(display, gc, mark_color);
-            XFillArc(display, window, gc, x + 12, 25, 36, 36,
-                     0, 360 * 64);
-            XSetForeground(display, gc,
-                           i == focused ? button_active_color : button_color);
-            size_t mark_length = first_byte < 0x80U ? 1
-                : (first_byte & 0xe0U) == 0xc0U ? 2
-                : (first_byte & 0xf0U) == 0xe0U ? 3 : 4;
-            size_t name_length = strlen(name);
-            if (mark_length > name_length) {
-                mark_length = name_length;
-            }
-            char mark_text[5] = {0};
-            memcpy(mark_text, name, mark_length);
-            if (mark_length == 1 && mark_text[0] >= 'a' &&
-                mark_text[0] <= 'z') {
-                mark_text[0] -= 'a' - 'A';
-            }
-            draw_text(window, mark_text, x + 23, 50, &dark_xft, 14);
-            draw_text(window, name, x + 60, 53,
-                      i == focused ? &text_xft : &muted_xft,
-                      card_width - 70);
-            XFree(name);
-        }
-    }
-    if (shown < client_count) {
-        char overflow[32];
-        snprintf(overflow, sizeof(overflow), "+%d more",
-                             client_count - shown);
-        int x = offset + shown * button_width;
-        draw_round_rect(window, x, 5, button_width - 8, TASKBAR_HEIGHT - 10,
-                        9, button_color);
-        draw_text(window, overflow, x + 16, 53, &muted_xft,
-                  button_width - 24);
+        draw_text(window, labels[i], x + 24, 41, &text_xft,
+                  section_width - 48);
     }
 }
 
@@ -767,9 +726,47 @@ static void draw_taskbar(void)
     draw_taskbar_monitor();
 }
 
+static void set_taskbar_struts(void)
+{
+    if (taskbar_window == None) {
+        return;
+    }
+    unsigned long strut[4] = {0, 0, 0,
+                              taskbar_enabled ? TASKBAR_HEIGHT : 0};
+    XChangeProperty(display, taskbar_window,
+                    XInternAtom(display, "_NET_WM_STRUT", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)strut, 4);
+    unsigned long partial[12] = {0, 0, 0,
+                                 taskbar_enabled ? TASKBAR_HEIGHT : 0,
+                                 0, 0, 0, 0,
+                                 0, 0,
+                                 screen_layout.x,
+                                 screen_layout.x + screen_layout.width - 1};
+    XChangeProperty(display, taskbar_window,
+                    XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)partial, 12);
+}
+
 static void sync_taskbars(void)
 {
     screen_layout = screen_layout_get(display);
+    screen_layout.y += STATUS_HEIGHT;
+    screen_layout.height -= STATUS_HEIGHT;
+    if (taskbar_enabled) {
+        screen_layout.height -= TASKBAR_HEIGHT;
+    }
+    unsigned long workarea[4] = {
+        (unsigned long)screen_layout.x,
+        (unsigned long)screen_layout.y,
+        (unsigned long)screen_layout.width,
+        (unsigned long)screen_layout.height
+    };
+    XChangeProperty(display, root,
+                    XInternAtom(display, "_NET_WORKAREA", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)workarea, 4);
     XSetWindowAttributes attributes;
     attributes.override_redirect = True;
     attributes.background_pixel = switcher_color;
@@ -777,14 +774,14 @@ static void sync_taskbars(void)
     if (taskbar_window == None) {
         taskbar_window = XCreateWindow(
             display, root, screen_layout.x,
-            screen_layout.y + screen_layout.height - TASKBAR_HEIGHT,
+            screen_layout.y + screen_layout.height,
             (unsigned int)screen_layout.width, TASKBAR_HEIGHT, 0,
             CopyFromParent, InputOutput, CopyFromParent,
             CWOverrideRedirect | CWBackPixel | CWEventMask, &attributes);
     } else {
         XMoveResizeWindow(
             display, taskbar_window, screen_layout.x,
-            screen_layout.y + screen_layout.height - TASKBAR_HEIGHT,
+            screen_layout.y + screen_layout.height,
             (unsigned int)screen_layout.width, TASKBAR_HEIGHT);
     }
     if (taskbar_enabled) {
@@ -792,6 +789,7 @@ static void sync_taskbars(void)
     } else {
         XUnmapWindow(display, taskbar_window);
     }
+    set_taskbar_struts();
     if (keyboard_window != None) {
         place_keyboard_window(keyboard_window);
     }
@@ -804,8 +802,7 @@ static void relayout_for_screen_size(void)
     for (int i = 0; i < client_count; ++i) {
         ManagedWindow *managed = &clients[i];
         int max_width = screen_layout.width - RESIZE_BORDER;
-        int available_height = screen_layout.height -
-            (taskbar_enabled && !managed->fullscreen ? TASKBAR_HEIGHT : 0);
+        int available_height = screen_layout.height;
         if (managed->terminal && focused == i && !managed->fullscreen &&
             terminal_count > 0) {
             available_height -= KEYBOARD_HEIGHT;
@@ -902,9 +899,18 @@ static void draw_switcher(void)
             XFillArc(display, switcher_window, gc, 23, y - 10, 12, 12,
                      0, 360 * 64);
             draw_text(switcher_window, name, 48, y, &text_xft,
-                      SWITCHER_WIDTH - 72);
+                      SWITCHER_WIDTH - 124);
             XFree(name);
         }
+        draw_round_rect(switcher_window, SWITCHER_WIDTH - 60, y - 25,
+                        48, 48, 10, close_color);
+        XSetForeground(display, gc, text_xft.pixel);
+        XDrawLine(display, switcher_window, gc,
+                  SWITCHER_WIDTH - 48, y - 13,
+                  SWITCHER_WIDTH - 24, y + 11);
+        XDrawLine(display, switcher_window, gc,
+                  SWITCHER_WIDTH - 24, y - 13,
+                  SWITCHER_WIDTH - 48, y + 11);
     }
 }
 
@@ -1000,9 +1006,9 @@ int main(int argc, char **argv)
     outline_color = named_color("#303945");
     close_color = named_color("#73343d");
     gc = XCreateGC(display, root, 0, NULL);
-    ui_font = XftFontOpenName(display, screen, "sans:size=14");
+    ui_font = XftFontOpenName(display, screen, "sans:size=15");
     if (ui_font == NULL) {
-        ui_font = XftFontOpenName(display, screen, "monospace:size=14");
+        ui_font = XftFontOpenName(display, screen, "monospace:size=15");
     }
     if (ui_font == NULL) {
         core_font = XLoadQueryFont(display, "fixed");
@@ -1187,22 +1193,19 @@ int main(int argc, char **argv)
                 if (event.xbutton.button != Button1) {
                     continue;
                 }
-                int screen_width = screen_layout.width;
-                if (client_count > 0) {
-                    int button_width;
-                    int shown;
-                    int offset;
-                    taskbar_layout(screen_width, &button_width, &shown,
-                                   &offset);
-                    int selected =
-                        (event.xbutton.x - offset) / button_width;
-                    if (event.xbutton.x >= offset && selected >= 0 &&
-                        selected < shown && selected < client_count) {
-                        focus_client(selected);
-                    } else if (event.xbutton.x >=
-                               offset + shown * button_width) {
-                        show_switcher();
-                    }
+                int section_width = screen_layout.width / 3;
+                int section = event.xbutton.x / section_width;
+                if (section < 0) {
+                    section = 0;
+                } else if (section > 2) {
+                    section = 2;
+                }
+                if (section == 0) {
+                    send_launcher_command();
+                } else if (section == 1) {
+                    toggle_keyboard();
+                } else {
+                    show_switcher();
                 }
                 continue;
             }
@@ -1219,6 +1222,12 @@ int main(int argc, char **argv)
                 int row = (event.xbutton.y - 49) / SWITCHER_ROW_HEIGHT;
                 int selected = first + row;
                 if (row >= 0 && row < visible && selected < client_count) {
+                    if (event.xbutton.x >= SWITCHER_WIDTH - 64) {
+                        focus_client(selected);
+                        close_focused();
+                        close_switcher();
+                        continue;
+                    }
                     focus_client(selected);
                     close_switcher();
                 }
@@ -1320,8 +1329,7 @@ int main(int argc, char **argv)
                 if (drag_mode != 0) {
                     int maximum_width = screen_layout.width - RESIZE_BORDER;
                     int maximum_height = screen_layout.height - TITLE_HEIGHT -
-                        RESIZE_BORDER -
-                        (taskbar_enabled ? TASKBAR_HEIGHT : 0);
+                        RESIZE_BORDER;
                     if (clients[index].terminal && focused == index &&
                         terminal_count > 0) {
                         maximum_height -= KEYBOARD_HEIGHT;
@@ -1347,8 +1355,7 @@ int main(int argc, char **argv)
                 int max_x = screen_layout.x + screen_layout.width -
                             clients[index].width - RESIZE_BORDER;
                 int max_y = screen_layout.y + screen_layout.height -
-                            clients[index].height - TITLE_HEIGHT - RESIZE_BORDER -
-                            (taskbar_enabled ? TASKBAR_HEIGHT : 0);
+                            clients[index].height - TITLE_HEIGHT - RESIZE_BORDER;
                 if (clients[index].terminal && focused == index &&
                     terminal_count > 0) {
                     max_y -= KEYBOARD_HEIGHT;

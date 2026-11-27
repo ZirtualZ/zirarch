@@ -86,7 +86,10 @@ hide_when_released()
 			[ "$(cat "$state_dir/hide-sequence" 2>/dev/null)" = "$sequence" ] ||
 				exit 0
 			keyboard_visible && exit 0
-			keyboard_dbus Hide && exit 0
+			keyboard_dbus Hide || :
+			[ -x /usr/bin/fieldm-hide-keyboard ] &&
+				/usr/bin/fieldm-hide-keyboard
+			exit 0
 		done
 	) &
 }

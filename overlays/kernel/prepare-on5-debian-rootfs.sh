@@ -129,6 +129,8 @@ chmod 755 "$ROOT_DIR/run/sshd"
 
 cp -a "$PROJECT_DIR/FieldM" "$ROOT_DIR/usr/src/zirarch/FieldM"
 cp -a "$KERNEL_DIR/fbconsole" "$ROOT_DIR/usr/src/zirarch/fbconsole"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-hide-keyboard.c" \
+	"$ROOT_DIR/usr/src/zirarch/fieldm-hide-keyboard.c"
 install -m 644 "$KERNEL_DIR/boot-mode/zirarch-x11-refresh.c" \
 	"$ROOT_DIR/usr/src/zirarch/zirarch-x11-refresh.c"
 chroot "$ROOT_DIR" /usr/bin/make -C /usr/src/zirarch/FieldM clean
@@ -159,6 +161,9 @@ install -m 755 "$KERNEL_DIR/boot-mode/fieldm-desktop-launch" \
 	"$ROOT_DIR/usr/bin/fieldm-desktop-launch"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-keyboard" \
 	"$ROOT_DIR/usr/bin/fieldm-keyboard"
+chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
+	/usr/bin/fieldm-hide-keyboard \
+	/usr/src/zirarch/fieldm-hide-keyboard.c
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-onboard" \
 	"$ROOT_DIR/usr/bin/fieldm-onboard"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-terminal" \
