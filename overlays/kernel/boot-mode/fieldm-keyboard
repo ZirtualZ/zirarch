@@ -27,6 +27,21 @@ keyboard_visible()
 		[ -e "$state_dir/terminal" ]
 }
 
+auto_show_enabled()
+{
+	[ "$(sed -n 's/^auto_show=//p' "${HOME:-/root}/.config/fieldm/keyboard.conf" \
+		2>/dev/null | tail -n 1)" != off ]
+}
+
+sync_terminal_state()
+{
+	keyboard_pid || return 0
+	read -r pid < "$pidfile"
+	kill -HUP "$pid" 2>/dev/null || :
+	[ -e "$state_dir/terminal" ] &&
+		kill -USR1 "$pid" 2>/dev/null || kill -USR2 "$pid" 2>/dev/null || :
+}
+
 start_keyboard()
 {
 	rm -f "$pidfile"
@@ -55,7 +70,11 @@ stop_keyboard()
 reconcile()
 {
 	if keyboard_visible; then
-		keyboard_pid || start_keyboard
+		if keyboard_pid; then
+			sync_terminal_state
+		else
+			start_keyboard
+		fi
 	else
 		stop_keyboard
 	fi
@@ -71,9 +90,18 @@ lease=${1:-manual}
 action=${2:-toggle}
 case "$lease" in manual|entry|terminal) ;; *) exit 1 ;; esac
 case "$action" in
-	on) touch "$state_dir/$lease" ;;
+	on)
+		if [ "$lease" = manual ] || auto_show_enabled; then
+			touch "$state_dir/$lease"
+		fi
+		;;
 	off) rm -f "$state_dir/$lease" ;;
 	toggle)
+		if [ "$lease" != manual ] && ! auto_show_enabled; then
+			rm -f "$state_dir/$lease"
+			reconcile
+			exit 0
+		fi
 		[ -e "$state_dir/$lease" ] &&
 			rm -f "$state_dir/$lease" ||
 			touch "$state_dir/$lease"

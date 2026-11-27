@@ -282,7 +282,96 @@ size_t applications_load(Application *applications, size_t capacity)
         free(copy);
     }
     qsort(applications, count, sizeof(*applications), compare_applications);
-    return count;
+    for (size_t i = 0; i < count; ++i) {
+        snprintf(applications[i].display_size,
+                 sizeof(applications[i].display_size), "normal");
+    }
+
+    const char *home = getenv("HOME");
+    if (home != NULL && home[0] != '\0') {
+        char path[PATH_MAX];
+        int length = snprintf(path, sizeof(path),
+                              "%s/.config/fieldm/app-display.conf", home);
+        if (length > 0 && (size_t)length < sizeof(path)) {
+            FILE *file = fopen(path, "r");
+            if (file != NULL) {
+                char line[320], id[APPLICATION_ID_SIZE], size[16];
+                while (fgets(line, sizeof(line), file) != NULL) {
+                    if (sscanf(line, "%255[^=]=%15s", id, size) != 2) continue;
+                    if (strcmp(size, "small") != 0 &&
+                        strcmp(size, "normal") != 0 &&
+                        strcmp(size, "large") != 0) continue;
+                    const char *saved_size =
+                        strcmp(size, "small") == 0 ? "small" :
+                        strcmp(size, "large") == 0 ? "large" : "normal";
+                    for (size_t i = 0; i < count; ++i) {
+                        if (strcmp(applications[i].desktop_id, id) == 0) {
+                            memcpy(applications[i].display_size, saved_size,
+                                   strlen(saved_size) + 1);
+                            break;
+                        }
+                    }
+                }
+                fclose(file);
+            }
+        }
+    }
+
+    size_t output_count = 0;
+    int terminal_added = 0;
+    for (size_t i = 0; i < count; ++i) {
+        Application *app = &applications[i];
+        char name[APPLICATION_NAME_SIZE];
+        snprintf(name, sizeof(name), "%s", app->name);
+        for (char *cursor = name; *cursor != '\0'; ++cursor) {
+            *cursor = (char)tolower((unsigned char)*cursor);
+        }
+        int terminal_alias =
+            strstr(name, "terminal") != NULL ||
+            strstr(name, "xterm") != NULL ||
+            strstr(name, "uxterm") != NULL ||
+            strstr(app->categories, "TerminalEmulator") != NULL;
+        if (terminal_alias) {
+            if (terminal_added) continue;
+            snprintf(app->name, sizeof(app->name), "Terminal");
+            terminal_added = 1;
+        }
+        if (output_count != i) applications[output_count] = *app;
+        ++output_count;
+    }
+    int custom_pins = 0;
+    char pins_path[PATH_MAX];
+    FILE *pins = NULL;
+    if (home != NULL && home[0] != '\0') {
+        int length = snprintf(pins_path, sizeof(pins_path),
+                              "%s/.config/fieldm/pinned-apps", home);
+        if (length > 0 && (size_t)length < sizeof(pins_path)) {
+            pins = fopen(pins_path, "r");
+        }
+    }
+    if (pins != NULL) {
+        custom_pins = 1;
+        char id[APPLICATION_ID_SIZE];
+        while (fgets(id, sizeof(id), pins) != NULL) {
+            id[strcspn(id, "\r\n")] = '\0';
+            for (size_t i = 0; i < output_count; ++i) {
+                if (strcmp(applications[i].desktop_id, id) == 0) {
+                    applications[i].pinned = 1;
+                    break;
+                }
+            }
+        }
+        fclose(pins);
+    }
+    if (!custom_pins) {
+        for (size_t i = 0; i < output_count; ++i) {
+            applications[i].pinned =
+                strcasecmp(applications[i].name, "Terminal") == 0 ||
+                strcasecmp(applications[i].name, "Files") == 0 ||
+                strcasecmp(applications[i].name, "Browser") == 0;
+        }
+    }
+    return output_count;
 }
 
 static int contains_case_insensitive(const char *text, const char *query)
@@ -413,10 +502,19 @@ static int build_arguments(const Application *application, char **arguments,
     return 1;
 }
 
-static int launch_arguments(char **arguments)
+static int launch_arguments(char **arguments, const char *display_size)
 {
     pid_t child = fork();
     if (child == 0) {
+        const char *scale = strcmp(display_size != NULL ? display_size : "normal",
+                                   "small") == 0 ? "0.85" :
+                            strcmp(display_size != NULL ? display_size : "normal",
+                                   "large") == 0 ? "1.15" : "1.0";
+        const char *font_dpi = strcmp(scale, "0.85") == 0 ? "144" :
+                               strcmp(scale, "1.15") == 0 ? "192" : "168";
+        setenv("GDK_DPI_SCALE", scale, 1);
+        setenv("QT_SCALE_FACTOR", scale, 1);
+        setenv("QT_FONT_DPI", font_dpi, 1);
         execvp(arguments[0], arguments);
         perror("Could not start application");
         _exit(127);
@@ -482,7 +580,7 @@ static int launch_in_terminal(const Application *terminal,
         arguments[count++] = application_arguments[i];
     }
     arguments[count] = NULL;
-    int launched = launch_arguments(arguments);
+    int launched = launch_arguments(arguments, application->display_size);
     free_arguments(terminal_arguments, terminal_count);
     free_arguments(application_arguments, application_count);
     return launched;
@@ -538,7 +636,7 @@ int application_launch_with_catalog(const Application *application,
         free_arguments(arguments, argument_count);
         return launch_with_terminal_catalog(application, applications, count);
     }
-    launched = launch_arguments(arguments);
+    launched = launch_arguments(arguments, application->display_size);
     free_arguments(arguments, argument_count);
     return launched;
 }
@@ -555,7 +653,7 @@ int application_open_path(const char *path)
         return 0;
     }
     char *arguments[] = {"xdg-open", (char *)path, NULL};
-    return launch_arguments(arguments);
+    return launch_arguments(arguments, "normal");
 }
 
 static int has_category(const Application *application, const char *category)
@@ -635,7 +733,7 @@ static int launch_fallback(ApplicationKind kind)
             const char *home = getenv("HOME");
             arguments[1] = (char *)(home != NULL && home[0] != '\0' ? home : "/");
         }
-        return launch_arguments(arguments);
+        return launch_arguments(arguments, "normal");
     }
     fprintf(stderr, "No compatible %s application is installed.\n",
             kind == APPLICATION_BROWSER ? "browser" : "file manager");
@@ -679,7 +777,7 @@ int applications_launch_terminal(const Application *applications, size_t count)
     for (size_t i = 0; i < sizeof(terminals) / sizeof(terminals[0]); ++i) {
         if (executable_available(terminals[i])) {
             char *arguments[] = {(char *)terminals[i], NULL};
-            return launch_arguments(arguments);
+            return launch_arguments(arguments, "normal");
         }
     }
     fprintf(stderr, "No supported terminal emulator is installed.\n");

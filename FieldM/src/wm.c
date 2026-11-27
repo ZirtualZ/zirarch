@@ -20,7 +20,7 @@
 
 enum {
     MAX_CLIENTS = 128,
-    TITLE_HEIGHT = FIELD_M_TITLE_HEIGHT,
+    TITLE_HEIGHT = FIELD_M_CLOSE_SIZE,
     MIN_WIDTH = 240,
     MIN_HEIGHT = 140,
     RESIZE_BORDER = 12,
@@ -31,7 +31,7 @@ enum {
     TASKBAR_HEIGHT = 0,
     TASKBAR_BUTTON_MIN_WIDTH = 180,
     TASKBAR_BUTTON_MAX_WIDTH = 320,
-    KEYBOARD_HEIGHT = FIELD_M_KEYBOARD_HEIGHT
+    DEFAULT_KEYBOARD_HEIGHT = FIELD_M_KEYBOARD_HEIGHT
 };
 
 typedef struct {
@@ -43,6 +43,7 @@ typedef struct {
     int height;
     int fullscreen;
     int terminal;
+    int dialog;
 } ManagedWindow;
 
 static Display *display;
@@ -69,6 +70,7 @@ static int startup_failed;
 static Window switcher_window;
 static Window taskbar_window;
 static Window keyboard_window;
+static int keyboard_height = DEFAULT_KEYBOARD_HEIGHT;
 static ScreenGeometry screen_layout;
 static int taskbar_enabled = 0;
 static int terminal_count;
@@ -78,6 +80,16 @@ static void draw_taskbar(void);
 static void sync_taskbars(void);
 static void arrange_client(int index);
 static void maximize_client(int index, int fullscreen);
+
+static void update_frame_title(int index)
+{
+    if (index < 0 || index >= client_count) return;
+    char *name = NULL;
+    if (XFetchName(display, clients[index].client, &name) && name != NULL) {
+        XStoreName(display, clients[index].frame, name);
+        XFree(name);
+    }
+}
 
 static void terminal_keyboard_command(const char *action)
 {
@@ -192,23 +204,45 @@ static int client_is_keyboard(Window window)
     return keyboard;
 }
 
-static void place_keyboard_window(Window window)
+static void place_keyboard_window(Window window, int requested_height)
 {
-    int y = screen_layout.y + screen_layout.height -
-            KEYBOARD_HEIGHT;
+    XWindowAttributes attributes;
+    if (requested_height <= 0) {
+        if (!XGetWindowAttributes(display, window, &attributes)) return;
+        requested_height = attributes.height;
+    }
+    if (requested_height < 1) return;
+    int previous_height = keyboard_height;
+    Window previous_window = keyboard_window;
+    keyboard_height = requested_height;
+    int y = screen_layout.y + screen_layout.height - keyboard_height;
     keyboard_window = window;
     XMoveResizeWindow(display, window, screen_layout.x, y,
-                      (unsigned int)screen_layout.width, KEYBOARD_HEIGHT);
+                      (unsigned int)screen_layout.width,
+                      (unsigned int)keyboard_height);
     XSetWindowBorderWidth(display, window, 0);
     XSelectInput(display, window, StructureNotifyMask | PropertyChangeMask);
-    unsigned long strut[4] = {0, 0, 0, KEYBOARD_HEIGHT};
+    unsigned long strut[4] = {0, 0, 0, (unsigned long)keyboard_height};
     XChangeProperty(display, window,
                     XInternAtom(display, "_NET_WM_STRUT", False),
                     XA_CARDINAL, 32, PropModeReplace,
                     (unsigned char *)strut, 4);
+    unsigned long partial[12] = {
+        0, 0, 0, (unsigned long)keyboard_height,
+        0, 0, 0, 0, 0,
+        (unsigned long)(screen_layout.width - 1), 0, 0
+    };
+    XChangeProperty(display, window,
+                    XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)partial, 12);
     XRaiseWindow(display, window);
     if (taskbar_enabled && taskbar_window != None) {
         XMapRaised(display, taskbar_window);
+    }
+    if ((previous_window != window || previous_height != keyboard_height) &&
+        focused >= 0) {
+        maximize_client(focused, clients[focused].fullscreen);
     }
     XFlush(display);
 }
@@ -410,6 +444,7 @@ static int is_desktop_surface(Window window)
     }
     if (value != NULL) {
         XFree(value);
+        value = NULL;
     }
     if (!is_desktop &&
         XGetWindowProperty(display, window, state_atom, 0, 16, False, XA_ATOM,
@@ -427,19 +462,6 @@ static int is_desktop_surface(Window window)
     if (value != NULL) {
         XFree(value);
         value = NULL;
-    }
-    if (!is_desktop) {
-        XClassHint hint = {0};
-        if (XGetClassHint(display, window, &hint)) {
-            if ((hint.res_name != NULL &&
-                 strcmp(hint.res_name, "simple-desktop") == 0) ||
-                (hint.res_class != NULL &&
-                 strcmp(hint.res_class, "simple-desktop") == 0)) {
-                is_desktop = 1;
-            }
-            XFree(hint.res_name);
-            XFree(hint.res_class);
-        }
     }
     return is_desktop;
 }
@@ -515,10 +537,10 @@ static void focus_client(int index)
     }
     focused = index;
     if (previous != index && previous >= 0 &&
-        previous < client_count && clients[previous].terminal) {
+        previous < client_count && !clients[previous].fullscreen) {
         maximize_client(previous, clients[previous].fullscreen);
     }
-    if (clients[index].terminal && !clients[index].fullscreen) {
+    if (!clients[index].fullscreen) {
         maximize_client(index, 0);
     }
     XRaiseWindow(display, clients[index].frame);
@@ -542,6 +564,18 @@ static void maximize_client(int index, int fullscreen)
     }
     ManagedWindow *managed = &clients[index];
     managed->fullscreen = fullscreen;
+    if (managed->dialog && !fullscreen) {
+        int max_width = screen_layout.width - 32;
+        int max_height = screen_layout.height - 32 -
+            (keyboard_window != None && focused == index ? keyboard_height : 0);
+        if (managed->width > max_width) managed->width = max_width;
+        if (managed->height > max_height) managed->height = max_height;
+        managed->x = screen_layout.x + (screen_layout.width - managed->width) / 2;
+        managed->y = screen_layout.y + (screen_layout.height - managed->height) / 2;
+        arrange_client(index);
+        raise_keyboard_window();
+        return;
+    }
     Atom states[3] = {
         XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False),
         XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False),
@@ -555,8 +589,8 @@ static void maximize_client(int index, int fullscreen)
     managed->y = screen_layout.y;
     managed->width = screen_layout.width - RESIZE_BORDER;
     managed->height = screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER -
-        (managed->terminal && focused == index && !fullscreen &&
-         terminal_count > 0 ? KEYBOARD_HEIGHT : 0);
+        (keyboard_window != None && focused == index && !fullscreen
+             ? keyboard_height : 0);
     arrange_client(index);
     if (taskbar_window != None) {
         if (taskbar_enabled && !fullscreen) {
@@ -594,7 +628,7 @@ static void manage_window(Window client)
     }
     if (client_is_keyboard(client)) {
         XMapWindow(display, client);
-        place_keyboard_window(client);
+        place_keyboard_window(client, -1);
         return;
     }
     if (client_count >= MAX_CLIENTS) {
@@ -612,10 +646,24 @@ static void manage_window(Window client)
     ManagedWindow *managed = &clients[index];
     managed->client = client;
     managed->terminal = 0;
+    Window transient_for = None;
+    managed->dialog = XGetTransientForHint(display, client, &transient_for) &&
+                      transient_for != None;
     managed->x = screen_layout.x;
     managed->y = screen_layout.y;
-    managed->width = screen_layout.width - RESIZE_BORDER;
-    managed->height = screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER;
+    managed->width = managed->dialog && attributes.width > 0
+        ? attributes.width : screen_layout.width - RESIZE_BORDER;
+    managed->height = managed->dialog && attributes.height > 0
+        ? attributes.height
+        : screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER;
+    if (managed->dialog) {
+        int max_width = screen_layout.width - 32;
+        int max_height = screen_layout.height - 32;
+        if (managed->width > max_width) managed->width = max_width;
+        if (managed->height > max_height) managed->height = max_height;
+        managed->x = screen_layout.x + (screen_layout.width - managed->width) / 2;
+        managed->y = screen_layout.y + (screen_layout.height - managed->height) / 2;
+    }
     if (managed->width < MIN_WIDTH) {
         managed->width = MIN_WIDTH;
     }
@@ -642,6 +690,7 @@ static void manage_window(Window client)
                 GrabModeSync, GrabModeAsync, None, None);
     XSetWindowBorderWidth(display, client, 0);
     XReparentWindow(display, client, managed->frame, 0, TITLE_HEIGHT);
+    update_frame_title(index);
     XMapWindow(display, client);
     XMapWindow(display, managed->frame);
     maximize_client(index, 0);
@@ -811,27 +860,31 @@ static void sync_taskbars(void)
     attributes.override_redirect = True;
     attributes.background_pixel = switcher_color;
     attributes.event_mask = ExposureMask | ButtonPressMask;
-    if (taskbar_window == None) {
-        taskbar_window = XCreateWindow(
-            display, root, screen_layout.x,
-            screen_layout.y + screen_layout.height,
-            (unsigned int)screen_layout.width, TASKBAR_HEIGHT, 0,
-            CopyFromParent, InputOutput, CopyFromParent,
-            CWOverrideRedirect | CWBackPixel | CWEventMask, &attributes);
+    if (TASKBAR_HEIGHT > 0) {
+        if (taskbar_window == None) {
+            taskbar_window = XCreateWindow(
+                display, root, screen_layout.x,
+                screen_layout.y + screen_layout.height,
+                (unsigned int)screen_layout.width, TASKBAR_HEIGHT, 0,
+                CopyFromParent, InputOutput, CopyFromParent,
+                CWOverrideRedirect | CWBackPixel | CWEventMask, &attributes);
+        } else {
+            XMoveResizeWindow(
+                display, taskbar_window, screen_layout.x,
+                screen_layout.y + screen_layout.height,
+                (unsigned int)screen_layout.width, TASKBAR_HEIGHT);
+        }
+        if (taskbar_enabled) {
+            XMapRaised(display, taskbar_window);
+        } else {
+            XUnmapWindow(display, taskbar_window);
+        }
     } else {
-        XMoveResizeWindow(
-            display, taskbar_window, screen_layout.x,
-            screen_layout.y + screen_layout.height,
-            (unsigned int)screen_layout.width, TASKBAR_HEIGHT);
-    }
-    if (taskbar_enabled) {
-        XMapRaised(display, taskbar_window);
-    } else {
-        XUnmapWindow(display, taskbar_window);
+        taskbar_window = None;
     }
     set_taskbar_struts();
     if (keyboard_window != None) {
-        place_keyboard_window(keyboard_window);
+        place_keyboard_window(keyboard_window, -1);
     }
     draw_taskbar();
 }
@@ -841,11 +894,24 @@ static void relayout_for_screen_size(void)
     sync_taskbars();
     for (int i = 0; i < client_count; ++i) {
         ManagedWindow *managed = &clients[i];
+        if (managed->dialog && !managed->fullscreen) {
+            int max_width = screen_layout.width - 32;
+            int max_height = screen_layout.height - 32 -
+                (keyboard_window != None && focused == i
+                     ? keyboard_height : 0);
+            if (managed->width > max_width) managed->width = max_width;
+            if (managed->height > max_height) managed->height = max_height;
+            managed->x = screen_layout.x +
+                         (screen_layout.width - managed->width) / 2;
+            managed->y = screen_layout.y +
+                         (screen_layout.height - managed->height) / 2;
+            arrange_client(i);
+            continue;
+        }
         int max_width = screen_layout.width - RESIZE_BORDER;
         int available_height = screen_layout.height;
-        if (managed->terminal && focused == i && !managed->fullscreen &&
-            terminal_count > 0) {
-            available_height -= KEYBOARD_HEIGHT;
+        if (keyboard_window != None && !managed->fullscreen && focused == i) {
+            available_height -= keyboard_height;
         }
         int max_height = available_height - TITLE_HEIGHT - RESIZE_BORDER;
         if (max_width >= MIN_WIDTH && managed->width > max_width) {
@@ -1111,12 +1177,16 @@ int main(int argc, char **argv)
         } else if (event.type == MapNotify &&
                    event.xmap.window != taskbar_window &&
                    client_is_keyboard(event.xmap.window)) {
-            place_keyboard_window(event.xmap.window);
+            place_keyboard_window(event.xmap.window, -1);
         } else if (event.type == ConfigureRequest) {
             int index = find_client(event.xconfigurerequest.window);
             if (index < 0) {
                 if (client_is_keyboard(event.xconfigurerequest.window)) {
-                    place_keyboard_window(event.xconfigurerequest.window);
+                    place_keyboard_window(event.xconfigurerequest.window,
+                                          (event.xconfigurerequest.value_mask &
+                                           CWHeight) != 0
+                                              ? event.xconfigurerequest.height
+                                              : -1);
                 } else {
                     XWindowChanges changes;
                     changes.x = event.xconfigurerequest.x;
@@ -1201,6 +1271,10 @@ int main(int argc, char **argv)
         } else if (event.type == UnmapNotify) {
             if (event.xunmap.window == keyboard_window) {
                 keyboard_window = None;
+                keyboard_height = 0;
+                if (focused >= 0) {
+                    maximize_client(focused, clients[focused].fullscreen);
+                }
                 continue;
             }
             int index = find_client(event.xunmap.window);
@@ -1215,6 +1289,10 @@ int main(int argc, char **argv)
         } else if (event.type == DestroyNotify) {
             if (event.xdestroywindow.window == keyboard_window) {
                 keyboard_window = None;
+                keyboard_height = 0;
+                if (focused >= 0) {
+                    maximize_client(focused, clients[focused].fullscreen);
+                }
                 continue;
             }
             int index = find_client(event.xdestroywindow.window);
@@ -1237,12 +1315,13 @@ int main(int argc, char **argv)
             }
         } else if (event.type == PropertyNotify) {
             if (event.xproperty.window == keyboard_window) {
-                place_keyboard_window(keyboard_window);
+                place_keyboard_window(keyboard_window, -1);
                 continue;
             }
             int index = find_client(event.xproperty.window);
             if (index >= 0 && clients[index].client == event.xproperty.window) {
                 sync_terminal_state(index);
+                update_frame_title(index);
                 draw_frame(index);
                 draw_taskbar();
             }
@@ -1394,9 +1473,9 @@ int main(int argc, char **argv)
                     int maximum_width = screen_layout.width - RESIZE_BORDER;
                     int maximum_height = screen_layout.height - TITLE_HEIGHT -
                         RESIZE_BORDER;
-                    if (clients[index].terminal && focused == index &&
-                        terminal_count > 0) {
-                        maximum_height -= KEYBOARD_HEIGHT;
+                    if (keyboard_window != None && focused == index &&
+                        !clients[index].fullscreen) {
+                        maximum_height -= keyboard_height;
                     }
                     if ((drag_mode & 1) != 0) {
                         clients[index].width = origin_width + dx < MIN_WIDTH
@@ -1420,9 +1499,9 @@ int main(int argc, char **argv)
                             clients[index].width - RESIZE_BORDER;
                 int max_y = screen_layout.y + screen_layout.height -
                             clients[index].height - TITLE_HEIGHT - RESIZE_BORDER;
-                if (clients[index].terminal && focused == index &&
-                    terminal_count > 0) {
-                    max_y -= KEYBOARD_HEIGHT;
+                if (keyboard_window != None && focused == index &&
+                    !clients[index].fullscreen) {
+                    max_y -= keyboard_height;
                 }
                 if (clients[index].x < screen_layout.x) {
                     clients[index].x = screen_layout.x;

@@ -207,9 +207,22 @@ static void process_x_events(ShellState *state)
             if (state->recents != NULL) recents_close(state);
             if (state->launcher != NULL) {
                 launcher_close(state);
+            } else if (state->quick_settings_open) {
+                state->quick_settings_open = 0;
+                if (state->home_stack != NULL) {
+                    gtk_stack_set_visible_child_name(
+                        GTK_STACK(state->home_stack), "home");
+                }
             } else if (state->settings != NULL) {
-                shell_keyboard_command("entry", "off");
-                gtk_widget_set_visible(state->settings, FALSE);
+                GtkStack *stack = g_object_get_data(
+                    G_OBJECT(state->settings), "settings-stack");
+                if (stack != NULL &&
+                    strcmp(gtk_stack_get_visible_child_name(stack), "menu") != 0) {
+                    gtk_stack_set_visible_child_name(stack, "menu");
+                } else {
+                    shell_keyboard_command("entry", "off");
+                    gtk_widget_set_visible(state->settings, FALSE);
+                }
             }
         } else if (event.type == ClientMessage &&
                    event.xclient.window == state->command_window &&
@@ -218,6 +231,13 @@ static void process_x_events(ShellState *state)
                    event.xclient.data.l[0] <= 5) {
             if (state->launcher != NULL) {
                 launcher_close(state);
+            }
+            if (state->quick_settings_open) {
+                state->quick_settings_open = 0;
+                if (state->home_stack != NULL) {
+                    gtk_stack_set_visible_child_name(
+                        GTK_STACK(state->home_stack), "home");
+                }
             }
             if (event.xclient.data.l[0] == 3 && state->recents != NULL) {
                 recents_close(state);
@@ -230,20 +250,26 @@ static void process_x_events(ShellState *state)
             }
             if (event.xclient.data.l[0] == 3 &&
                 state->desktop_window != NULL) {
+                if (state->home_stack != NULL) {
+                    gtk_stack_set_visible_child_name(
+                        GTK_STACK(state->home_stack), "home");
+                }
                 gtk_window_present(GTK_WINDOW(state->desktop_window));
             }
-            XClientMessageEvent message;
-            memset(&message, 0, sizeof(message));
-            message.type = ClientMessage;
-            message.window = DefaultRootWindow(state->xdisplay);
-            message.message_type = state->command_atom;
-            message.format = 32;
-            message.data.l[0] = event.xclient.data.l[0];
-            XSendEvent(state->xdisplay,
-                       DefaultRootWindow(state->xdisplay),
-                       False, SubstructureNotifyMask,
-                       (XEvent *)&message);
-            XFlush(state->xdisplay);
+            if (event.xclient.data.l[0] != 4) {
+                XClientMessageEvent message;
+                memset(&message, 0, sizeof(message));
+                message.type = ClientMessage;
+                message.window = DefaultRootWindow(state->xdisplay);
+                message.message_type = state->command_atom;
+                message.format = 32;
+                message.data.l[0] = event.xclient.data.l[0];
+                XSendEvent(state->xdisplay,
+                           DefaultRootWindow(state->xdisplay),
+                           False, SubstructureNotifyMask,
+                           (XEvent *)&message);
+                XFlush(state->xdisplay);
+            }
         }
     }
 }
@@ -293,8 +319,6 @@ static void create_command_window(ShellState *state)
                                     "_FIELD_DESKTOP_COMMAND_OWNER", False);
     state->feature_atom = XInternAtom(state->xdisplay,
                                       "_FIELD_DESKTOP_FEATURES", False);
-    state->desktop_type_atom = XInternAtom(
-        state->xdisplay, "_NET_WM_WINDOW_TYPE_DESKTOP", False);
     XSetSelectionOwner(state->xdisplay, state->owner_atom,
                        state->command_window, CurrentTime);
     if (XGetSelectionOwner(state->xdisplay, state->owner_atom) !=
@@ -319,6 +343,8 @@ static void application_activate(GtkApplication *application, gpointer data)
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(), GTK_STYLE_PROVIDER(state->styles),
         GTK_STYLE_PROVIDER_PRIORITY_USER);
+    state->desktop_type_atom = XInternAtom(
+        state->xdisplay, "_NET_WM_WINDOW_TYPE_DESKTOP", False);
     shell_refresh_desktop_windows(state);
     create_command_window(state);
     state->x_source = g_unix_fd_add(

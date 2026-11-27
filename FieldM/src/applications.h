@@ -17,7 +17,9 @@ typedef struct {
     char desktop_id[APPLICATION_ID_SIZE];
     char categories[256];
     char icon[128];
+    char display_size[8];
     int terminal;
+    int pinned;
 } Application;
 
 typedef enum {

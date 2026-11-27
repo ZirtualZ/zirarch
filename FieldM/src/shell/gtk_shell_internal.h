@@ -49,6 +49,7 @@ typedef struct {
     char icon_theme_id[SHELL_ICON_THEME_ID_SIZE];
     ScreenGeometry screen;
     GtkWidget *desktop_window;
+    GtkWidget *home_stack;
     GtkWidget *wallpaper_picture;
     GtkWidget *status_panel;
     GtkWidget *launcher;
@@ -57,7 +58,12 @@ typedef struct {
     GtkWidget *launcher_results;
     GtkWidget *home_search;
     GtkWidget *home_grid;
+    GtkWidget *home_clock;
+    GtkWidget *home_date;
+    GtkWidget *drawer_search;
+    GtkWidget *drawer_grid;
     GtkWidget *recents;
+    int quick_settings_open;
     GtkWidget *wallpaper_toggle;
     GtkWidget *icon_theme_dropdown;
     GtkCssProvider *styles;
@@ -72,6 +78,7 @@ typedef struct {
     GtkWidget *status_network;
     GtkWidget *status_clock;
     GtkWidget *status_telemetry;
+    GtkWidget *quick_battery;
     GSubprocess *status_wifi_process;
     guint64 status_cpu_idle;
     guint64 status_cpu_total;
@@ -90,6 +97,7 @@ void desktop_view_center_window(ShellState *state, GtkWidget *window,
 void launcher_open(ShellState *state);
 void launcher_close(ShellState *state);
 void settings_open(ShellState *state);
+void settings_open_section(ShellState *state, const char *section);
 void recents_open(ShellState *state);
 void recents_close(ShellState *state);
 

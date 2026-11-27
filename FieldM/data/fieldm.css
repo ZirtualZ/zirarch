@@ -124,6 +124,11 @@ popover menuitem:active, menuitem:active {
   color: #F4F1EA;
 }
 
+.dropdown-value {
+  color: #111111;
+  background: transparent;
+}
+
 switch {
   min-width: 64px;
   min-height: 64px;
@@ -176,7 +181,7 @@ progressbar progress, scale highlight {
   padding: 0 12px;
 }
 
-.status-clock, .status-network, .status-battery, .keyboard-toggle {
+.status-clock, .status-network, .status-battery {
   font-family: "DejaVu Sans Mono";
   color: #111111;
   background: transparent;
@@ -186,7 +191,24 @@ progressbar progress, scale highlight {
 
 .status-clock { font-size: 18px; font-weight: 700; }
 .status-network, .status-battery { font-size: 14px; }
-.keyboard-toggle { min-width: 64px; min-height: 48px; }
+.home-clock {
+  font-family: "DejaVu Sans Mono";
+  font-size: 64px;
+  font-weight: 700;
+  background: transparent;
+}
+
+.home-date {
+  font-size: 20px;
+  background: transparent;
+}
+
+.home-dock {
+  border: 2px solid #111111;
+  border-radius: 4px;
+  padding: 4px;
+  background: #E2DDD2;
+}
 
 .home-watermark, .title-1, .title-2 {
   color: #111111;
@@ -200,8 +222,8 @@ progressbar progress, scale highlight {
 .title-2 { font-size: 24px; }
 
 .app-grid-button {
-  min-width: 190px;
-  min-height: 180px;
+  min-width: 128px;
+  min-height: 116px;
   border: 2px solid #111111;
   border-radius: 4px;
   padding: 12px 8px;
@@ -217,7 +239,7 @@ progressbar progress, scale highlight {
 .app-grid-button label {
   color: #111111;
   background: transparent;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -236,9 +258,9 @@ progressbar progress, scale highlight {
   background: transparent;
 }
 
-.app-icon-badge, .app-icon-image {
+.app-icon-badge {
   background: transparent;
-  border: none;
+  border: 2px solid #111111;
   border-radius: 4px;
   box-shadow: none;
 }

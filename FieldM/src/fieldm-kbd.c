@@ -5,22 +5,20 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
+#include <X11/XKBlib.h>
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
 #define WIDTH 720
-#define HEIGHT FIELD_M_KEYBOARD_HEIGHT
-#define KEY_HEIGHT 64
-#define LONG_PRESS_MS 400
-#define REPEAT_DELAY_MS 400
-#define REPEAT_INTERVAL_MS 60
+#define DEFAULT_KEY_HEIGHT 64
 
 typedef enum {
     KEY_NORMAL,
@@ -63,6 +61,8 @@ static XftFont *font;
 static XftColor text_color, paper_color;
 static Key keys[64];
 static int key_count;
+static char label_storage[256][2];
+static int label_storage_count;
 static int symbols_page;
 static int terminal_page;
 static int shifted;
@@ -73,11 +73,25 @@ static int repeat_index = -1;
 static unsigned long long press_started;
 static unsigned long long repeat_due;
 static int long_press_sent;
-static volatile sig_atomic_t layout_request;
+static int key_height = DEFAULT_KEY_HEIGHT;
+static int number_row;
+static int long_press_ms = 400;
+static int repeat_delay_ms = 400;
+static int repeat_interval_ms = 60;
+static int highlight_enabled = 1;
+static int terminal_mode = 1;
+static int terminal_active;
+static int keyboard_mapped;
+static int window_height = FIELD_M_KEYBOARD_HEIGHT;
+static volatile sig_atomic_t config_reload;
+static volatile sig_atomic_t terminal_on;
+static volatile sig_atomic_t terminal_off;
 
 static void layout_signal_handler(int signal)
 {
-    layout_request = signal == SIGUSR1 ? 1 : 2;
+    if (signal == SIGHUP) config_reload = 1;
+    else if (signal == SIGUSR1) terminal_on = 1;
+    else if (signal == SIGUSR2) terminal_off = 1;
 }
 
 static unsigned long pixel(const char *name)
@@ -105,9 +119,9 @@ static void set_wm_hints(void)
     XSizeHints hints = {0};
     hints.flags = PPosition | PSize;
     hints.x = 0;
-    hints.y = 960;
+    hints.y = DisplayHeight(display, DefaultScreen(display)) - window_height;
     hints.width = WIDTH;
-    hints.height = HEIGHT;
+    hints.height = window_height;
     XSetWMNormalHints(display, window, &hints);
 
     XClassHint class_hint = {"fieldm-kbd", "fieldm-kbd"};
@@ -117,12 +131,12 @@ static void set_wm_hints(void)
                     XInternAtom(display, "_NET_WM_WINDOW_TYPE", False),
                     XA_ATOM, 32, PropModeReplace,
                     (unsigned char *)&type, 1);
-    unsigned long strut[4] = {0, 0, 0, HEIGHT};
+    unsigned long strut[4] = {0, 0, 0, (unsigned long)window_height};
     XChangeProperty(display, window,
                     XInternAtom(display, "_NET_WM_STRUT", False),
                     XA_CARDINAL, 32, PropModeReplace,
                     (unsigned char *)strut, 4);
-    unsigned long partial[12] = {0, 0, 0, HEIGHT,
+    unsigned long partial[12] = {0, 0, 0, (unsigned long)window_height,
                                  0, 0, 0, 0, 0, WIDTH - 1, 0, 0};
     XChangeProperty(display, window,
                     XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False),
@@ -139,6 +153,21 @@ static KeySym letter_keysym(char letter)
     return (KeySym)(XK_a + (letter - 'a'));
 }
 
+static char *single_character_label(char character)
+{
+    if (label_storage_count >= (int)(sizeof(label_storage) /
+                                     sizeof(label_storage[0]))) {
+        return NULL;
+    }
+    char *label = label_storage[label_storage_count++];
+    label[0] = character;
+    label[1] = '\0';
+    return label;
+}
+
+static void load_config(void);
+static void update_window_geometry(void);
+
 static void add_key_row(const KeyDef *defs, int count, int y)
 {
     int unit = WIDTH / 10;
@@ -152,10 +181,107 @@ static void add_key_row(const KeyDef *defs, int count, int y)
         keys[key_count].x = x;
         keys[key_count].y = y;
         keys[key_count].w = width;
-        keys[key_count].h = KEY_HEIGHT;
+        keys[key_count].h = key_height;
         ++key_count;
         x += width;
     }
+}
+
+static void load_config(void)
+{
+    key_height = DEFAULT_KEY_HEIGHT;
+    number_row = 0;
+    terminal_mode = 1;
+    long_press_ms = 400;
+    repeat_delay_ms = 400;
+    repeat_interval_ms = 60;
+    highlight_enabled = 1;
+    const char *home = getenv("HOME");
+    if (home == NULL || home[0] == '\0') return;
+    char path[1024];
+    int length = snprintf(path, sizeof(path),
+                          "%s/.config/fieldm/keyboard.conf", home);
+    if (length < 0 || (size_t)length >= sizeof(path)) return;
+    FILE *file = fopen(path, "r");
+    if (file == NULL) return;
+    char line[256];
+    while (fgets(line, sizeof(line), file) != NULL) {
+        char key[64], value[128];
+        if (sscanf(line, "%63[^=]=%127s", key, value) != 2) continue;
+        if (strcmp(key, "key_height") == 0) {
+            int height = atoi(value);
+            if (height == 56 || height == 64 || height == 72)
+                key_height = height;
+        } else if (strcmp(key, "number_row") == 0) {
+            number_row = strcmp(value, "on") == 0;
+        } else if (strcmp(key, "terminal_row") == 0) {
+            terminal_mode = strcmp(value, "always") == 0 ? 2 :
+                            strcmp(value, "off") == 0 ? 0 : 1;
+        } else if (strcmp(key, "long_press_ms") == 0) {
+            int delay = atoi(value);
+            if (delay == 300 || delay == 400 || delay == 600)
+                long_press_ms = delay;
+        } else if (strcmp(key, "repeat_speed") == 0) {
+            if (strcmp(value, "slow") == 0) {
+                repeat_delay_ms = 500; repeat_interval_ms = 100;
+            } else if (strcmp(value, "fast") == 0) {
+                repeat_delay_ms = 300; repeat_interval_ms = 40;
+            } else if (strcmp(value, "normal") == 0) {
+                repeat_delay_ms = 400; repeat_interval_ms = 60;
+            }
+        } else if (strcmp(key, "highlight") == 0) {
+            highlight_enabled = strcmp(value, "off") != 0;
+        }
+    }
+    fclose(file);
+}
+
+static void update_window_geometry(void)
+{
+    window_height = key_count > 0
+        ? keys[key_count - 1].y + key_height : 0;
+    if (window == None) return;
+    int y = DisplayHeight(display, DefaultScreen(display)) - window_height;
+    XMoveResizeWindow(display, window, 0, y, WIDTH, (unsigned int)window_height);
+    unsigned long strut[4] = {0, 0, 0, (unsigned long)window_height};
+    XChangeProperty(display, window,
+                    XInternAtom(display, "_NET_WM_STRUT", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)strut, 4);
+    unsigned long partial[12] = {0, 0, 0, (unsigned long)window_height,
+                                 0, 0, 0, 0, 0, WIDTH - 1, 0, 0};
+    XChangeProperty(display, window,
+                    XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)partial, 12);
+    XFlush(display);
+}
+
+static int keyboard_requested(void)
+{
+    static const char *const leases[] = {
+        "/run/fieldm-keyboard/manual",
+        "/run/fieldm-keyboard/entry",
+        "/run/fieldm-keyboard/terminal"
+    };
+    for (size_t i = 0; i < sizeof(leases) / sizeof(leases[0]); ++i) {
+        if (access(leases[i], F_OK) == 0) return 1;
+    }
+    return 0;
+}
+
+static void update_keyboard_visibility(void)
+{
+    int requested = keyboard_requested();
+    if (requested == keyboard_mapped) return;
+    keyboard_mapped = requested;
+    if (requested) {
+        XMapRaised(display, window);
+        XRaiseWindow(display, window);
+    } else {
+        XUnmapWindow(display, window);
+    }
+    XFlush(display);
 }
 
 static KeyDef normal_key(const char *label, KeySym keysym,
@@ -168,9 +294,11 @@ static KeyDef normal_key(const char *label, KeySym keysym,
 static void build_layout(void)
 {
     key_count = 0;
+    label_storage_count = 0;
     int y = 0;
 
-    if (terminal_page) {
+    if (terminal_page && (terminal_mode == 2 ||
+                          (terminal_mode == 1 && terminal_active))) {
         KeyDef terminal[] = {
             {"Esc", NULL, XK_Escape, NoSymbol, NULL, 1, KEY_ESCAPE},
             {"Tab", NULL, XK_Tab, NoSymbol, NULL, 1, KEY_TAB},
@@ -184,7 +312,7 @@ static void build_layout(void)
             {"/", NULL, XK_slash, NoSymbol, NULL, 1, KEY_NORMAL}
         };
         add_key_row(terminal, 10, y);
-        y += KEY_HEIGHT;
+        y += key_height;
     }
 
     if (symbols_page) {
@@ -196,7 +324,7 @@ static void build_layout(void)
             normal_key("9", XK_9, NULL), normal_key("0", XK_0, NULL)
         };
         add_key_row(digits, 10, y);
-        y += KEY_HEIGHT;
+        y += key_height;
 
         KeyDef punctuation1[] = {
             normal_key("-", XK_minus, NULL), normal_key("/", XK_slash, NULL),
@@ -206,7 +334,7 @@ static void build_layout(void)
             normal_key("@", XK_at, NULL), normal_key("\"", XK_quotedbl, NULL)
         };
         add_key_row(punctuation1, 10, y);
-        y += KEY_HEIGHT;
+        y += key_height;
 
         KeyDef punctuation2[] = {
             normal_key(".", XK_period, NULL), normal_key(",", XK_comma, NULL),
@@ -216,80 +344,97 @@ static void build_layout(void)
             normal_key("+", XK_plus, NULL), normal_key("=", XK_equal, NULL)
         };
         add_key_row(punctuation2, 10, y);
-        y += KEY_HEIGHT;
+        y += key_height;
+
+        KeyDef punctuation3[] = {
+            normal_key("_", XK_underscore, NULL), normal_key("\\", XK_backslash, NULL),
+            normal_key("|", XK_bar, NULL), normal_key("~", XK_asciitilde, NULL),
+            normal_key("<", XK_less, NULL), normal_key(">", XK_greater, NULL),
+            normal_key("[", XK_bracketleft, NULL), normal_key("]", XK_bracketright, NULL),
+            normal_key("{", XK_braceleft, NULL), normal_key("}", XK_braceright, NULL)
+        };
+        add_key_row(punctuation3, 10, y);
+        y += key_height;
 
         KeyDef bottom[] = {
             {"ABC", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_LETTERS},
             {"Term", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
-            normal_key("_", XK_underscore, NULL),
-            normal_key(" ", XK_space, NULL),
-            normal_key("_", XK_underscore, NULL),
+            normal_key(",", XK_comma, NULL),
+            {"space", NULL, XK_space, NoSymbol, NULL, 4, KEY_SPACE},
+            normal_key(".", XK_period, NULL),
             {"Enter", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
         };
         bottom[3].units = 4;
         add_key_row(bottom, 6, y);
     } else {
+        if (number_row) {
+            KeyDef digits[] = {
+                normal_key("1", XK_1, NULL), normal_key("2", XK_2, NULL),
+                normal_key("3", XK_3, NULL), normal_key("4", XK_4, NULL),
+                normal_key("5", XK_5, NULL), normal_key("6", XK_6, NULL),
+                normal_key("7", XK_7, NULL), normal_key("8", XK_8, NULL),
+                normal_key("9", XK_9, NULL), normal_key("0", XK_0, NULL)
+            };
+            add_key_row(digits, 10, y);
+            y += key_height;
+        }
         const char *qwerty = "qwertyuiop";
         const char *digits_alt = "1234567890";
         KeyDef top[10];
         for (int i = 0; i < 10; ++i) {
-            char *base = calloc(2, 1);
-            char *upper = calloc(2, 1);
-            char *alternate = calloc(2, 1);
-            base[0] = qwerty[i];
-            upper[0] = (char)(qwerty[i] - 'a' + 'A');
-            alternate[0] = digits_alt[i];
+            char *base = single_character_label(qwerty[i]);
+            char *upper = single_character_label(
+                (char)(qwerty[i] - 'a' + 'A'));
+            char *alternate = single_character_label(digits_alt[i]);
             top[i] = (KeyDef){base, upper, letter_keysym(qwerty[i]),
                               letter_keysym(upper[0]), alternate, 1, KEY_NORMAL};
         }
         add_key_row(top, 10, y);
-        y += KEY_HEIGHT;
+        y += key_height;
 
         const char *second = "asdfghjkl";
         KeyDef middle[9];
         for (int i = 0; i < 9; ++i) {
-            char *base = calloc(2, 1);
-            char *upper = calloc(2, 1);
-            base[0] = second[i];
-            upper[0] = (char)(second[i] - 'a' + 'A');
+            char *base = single_character_label(second[i]);
+            char *upper = single_character_label(
+                (char)(second[i] - 'a' + 'A'));
             middle[i] = (KeyDef){base, upper, letter_keysym(second[i]),
                                  letter_keysym(upper[0]), NULL, 1, KEY_NORMAL};
         }
         add_key_row(middle, 9, y);
-        y += KEY_HEIGHT;
+        y += key_height;
 
         KeyDef third[] = {
             {"Shift", "Shift*", NoSymbol, NoSymbol, NULL, 2, KEY_SHIFT},
-            normal_key("z", XK_z, "0"),
-            normal_key("x", XK_x, "1"),
-            normal_key("c", XK_c, "2"),
-            normal_key("v", XK_v, "3"),
-            normal_key("b", XK_b, "4"),
-            normal_key("n", XK_n, "5"),
-            normal_key("m", XK_m, "6"),
+            normal_key("z", XK_z, NULL),
+            normal_key("x", XK_x, NULL),
+            normal_key("c", XK_c, NULL),
+            normal_key("v", XK_v, NULL),
+            normal_key("b", XK_b, NULL),
+            normal_key("n", XK_n, NULL),
+            normal_key("m", XK_m, NULL),
             {"Back", NULL, XK_BackSpace, NoSymbol, NULL, 1, KEY_BACKSPACE}
         };
         for (int i = 1; i < 8; ++i) {
             char upper = (char)(third[i].label[0] - 'a' + 'A');
-            char *upper_label = calloc(2, 1);
-            upper_label[0] = upper;
-            third[i].shift_label = upper_label;
+            third[i].shift_label = single_character_label(upper);
             third[i].shifted_keysym = letter_keysym(upper);
         }
         add_key_row(third, 9, y);
-        y += KEY_HEIGHT;
+        y += key_height;
 
         KeyDef bottom[] = {
             {"?123", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_SYMBOLS},
             {"Term", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
             normal_key(",", XK_comma, NULL),
-            normal_key(" ", XK_space, NULL),
+            {"space", NULL, XK_space, NoSymbol, NULL, 4, KEY_SPACE},
             normal_key(".", XK_period, NULL),
             {"Enter", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
         };
         bottom[3].units = 4;
         add_key_row(bottom, 6, y);
     }
+    update_window_geometry();
 }
 
 static void fake_key(KeySym keysym)
@@ -302,11 +447,15 @@ static void fake_key(KeySym keysym)
 
 static void fake_modded_keysym(KeySym keysym)
 {
-    int need_shift = (shifted || caps) && keysym >= XK_a && keysym <= XK_z;
-    if (need_shift) {
+    KeyCode keycode = XKeysymToKeycode(display, keysym);
+    int need_shift = keycode != 0 &&
+        XkbKeycodeToKeysym(display, keycode, 0, 0) != keysym &&
+        XkbKeycodeToKeysym(display, keycode, 0, 1) == keysym;
+    if ((shifted || caps) && keysym >= XK_a && keysym <= XK_z) {
         KeySym lower = NoSymbol, upper = NoSymbol;
         XConvertCase(keysym, &lower, &upper);
         keysym = upper;
+        need_shift = 1;
     }
     if (sticky_ctrl) {
         XTestFakeKeyEvent(display, XKeysymToKeycode(display, XK_Control_L),
@@ -357,25 +506,10 @@ static void activate_key(Key *key)
         build_layout();
         return;
     }
-    if (def->action == KEY_BACKSPACE) {
-        fake_key(XK_BackSpace);
-        return;
-    }
-    if (def->action == KEY_LEFT) { fake_key(XK_Left); return; }
-    if (def->action == KEY_UP) { fake_key(XK_Up); return; }
-    if (def->action == KEY_DOWN) { fake_key(XK_Down); return; }
-    if (def->action == KEY_RIGHT) { fake_key(XK_Right); return; }
-    if (def->action == KEY_ESCAPE) { fake_key(XK_Escape); return; }
-    if (def->action == KEY_TAB) { fake_key(XK_Tab); return; }
-    if (def->action == KEY_ENTER) { fake_key(XK_Return); return; }
-    if (def->action == KEY_SPACE) { fake_key(XK_space); return; }
-
     if (def->keysym != NoSymbol) {
-        if ((shifted || caps) && def->shifted_keysym != NoSymbol) {
-            fake_modded_keysym(def->shifted_keysym);
-        } else {
-            fake_modded_keysym(def->keysym);
-        }
+        KeySym sym = (shifted || caps) && def->shifted_keysym != NoSymbol
+            ? def->shifted_keysym : def->keysym;
+        fake_modded_keysym(sym);
     }
     sticky_ctrl = 0;
     if (shifted && !caps) shifted = 0;
@@ -396,7 +530,7 @@ static void send_long_alternate(Key *key)
 static void draw_key(Key *key)
 {
     int index = (int)(key - keys);
-    unsigned long background = index == pressed_index
+    unsigned long background = highlight_enabled && index == pressed_index
         ? pixel(FIELD_M_FOREGROUND) : pixel(FIELD_M_BACKGROUND);
     XSetForeground(display, gc, background);
     XFillRectangle(display, window, gc, key->x, key->y, key->w, key->h);
@@ -409,7 +543,8 @@ static void draw_key(Key *key)
         ? key->def.shift_label : key->def.label;
     if (key->def.action == KEY_SHIFT && caps)
         label = "Shift*";
-    XftColor *foreground = index == pressed_index ? &paper_color : &text_color;
+    XftColor *foreground = highlight_enabled && index == pressed_index
+        ? &paper_color : &text_color;
     XGlyphInfo extents;
     XftTextExtentsUtf8(display, font, (const FcChar8 *)label,
                        (int)strlen(label), &extents);
@@ -423,7 +558,8 @@ static void draw_layout(void)
 {
     XClearWindow(display, window);
     XSetForeground(display, gc, pixel(FIELD_M_BACKGROUND));
-    XFillRectangle(display, window, gc, 0, 0, WIDTH, HEIGHT);
+    XFillRectangle(display, window, gc, 0, 0, WIDTH,
+                   (unsigned int)window_height);
     for (int i = 0; i < key_count; ++i) draw_key(&keys[i]);
     XSync(display, False);
 }
@@ -442,18 +578,26 @@ int main(void)
 {
     signal(SIGUSR1, layout_signal_handler);
     signal(SIGUSR2, layout_signal_handler);
+    signal(SIGHUP, layout_signal_handler);
     display = XOpenDisplay(NULL);
     if (display == NULL) return 1;
+    terminal_active = access("/run/fieldm-keyboard/terminal", F_OK) == 0;
+    load_config();
+    build_layout();
     int screen = DefaultScreen(display);
     window = XCreateSimpleWindow(display, RootWindow(display, screen),
-                                 0, 960, WIDTH, HEIGHT, 0,
+                                 0, DisplayHeight(display, screen) - window_height,
+                                 WIDTH, (unsigned int)window_height, 0,
                                  pixel(FIELD_M_FOREGROUND),
                                  pixel(FIELD_M_BACKGROUND));
     XSelectInput(display, window,
                  ExposureMask | ButtonPressMask | ButtonReleaseMask);
     set_wm_hints();
-    XMapRaised(display, window);
-    XRaiseWindow(display, window);
+    keyboard_mapped = keyboard_requested();
+    if (keyboard_mapped) {
+        XMapRaised(display, window);
+        XRaiseWindow(display, window);
+    }
     gc = XCreateGC(display, window, 0, NULL);
     font = XftFontOpenName(display, screen, "DejaVu Sans Mono:size=16");
     draw = XftDrawCreate(display, window, DefaultVisual(display, screen),
@@ -465,22 +609,28 @@ int main(void)
                       DefaultColormap(display, screen),
                       FIELD_M_BACKGROUND, &paper_color);
 
-    build_layout();
     draw_layout();
 
     struct pollfd fd = {ConnectionNumber(display), POLLIN, 0};
     for (;;) {
-        if (layout_request != 0) {
-            if (layout_request == 1) symbols_page = !symbols_page;
-            else terminal_page = !terminal_page;
-            layout_request = 0;
+        if (config_reload) {
+            config_reload = 0;
+            load_config();
+            build_layout();
+            update_keyboard_visibility();
+            draw_layout();
+        }
+        if (terminal_on || terminal_off) {
+            if (terminal_on) terminal_active = 1;
+            if (terminal_off) terminal_active = 0;
+            terminal_on = terminal_off = 0;
             build_layout();
             draw_layout();
         }
         unsigned long long now = monotonic_ms();
         int timeout = -1;
         if (pressed_index >= 0) {
-            unsigned long long due = press_started + LONG_PRESS_MS;
+            unsigned long long due = press_started + (unsigned long long)long_press_ms;
             if (repeat_index >= 0) due = repeat_due;
             long long remaining = (long long)due - (long long)now;
             timeout = remaining > 0 ? (int)remaining : 0;
@@ -496,7 +646,7 @@ int main(void)
                 pressed_index = hit_key(event.xbutton.x, event.xbutton.y);
                 if (pressed_index >= 0) {
                     press_started = monotonic_ms();
-                    repeat_due = press_started + REPEAT_DELAY_MS;
+                    repeat_due = press_started + (unsigned long long)repeat_delay_ms;
                     repeat_index = (keys[pressed_index].def.action == KEY_BACKSPACE ||
                                     keys[pressed_index].def.action == KEY_LEFT ||
                                     keys[pressed_index].def.action == KEY_UP ||
@@ -521,13 +671,13 @@ int main(void)
         if (pressed_index >= 0 &&
             !long_press_sent &&
             repeat_index < 0 &&
-            now - press_started >= LONG_PRESS_MS) {
+            now - press_started >= (unsigned long long)long_press_ms) {
             send_long_alternate(&keys[pressed_index]);
             draw_layout();
         }
         if (repeat_index >= 0 && now >= repeat_due) {
             activate_key(&keys[repeat_index]);
-            repeat_due = now + REPEAT_INTERVAL_MS;
+            repeat_due = now + (unsigned long long)repeat_interval_ms;
             draw_layout();
         }
     }

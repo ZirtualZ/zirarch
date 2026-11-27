@@ -5,8 +5,6 @@
 #include <X11/Xatom.h>
 #include <stdio.h>
 #include <string.h>
-#include <inttypes.h>
-#include <sys/statvfs.h>
 
 void desktop_view_center_window(ShellState *state, GtkWidget *window,
                                 int width, int height)
@@ -67,11 +65,21 @@ static gboolean desktop_key_pressed(GtkEventControllerKey *controller,
     if (keyval != GDK_KEY_Escape) {
         return GDK_EVENT_PROPAGATE;
     }
-    if (state->launcher != NULL) {
+    if (state->quick_settings_open) {
+        state->quick_settings_open = 0;
+        gtk_stack_set_visible_child_name(GTK_STACK(state->home_stack), "home");
+    } else if (state->launcher != NULL) {
         launcher_close(state);
     } else if (state->settings != NULL) {
-        shell_keyboard_command("entry", "off");
-        gtk_widget_set_visible(state->settings, FALSE);
+        GtkStack *stack = g_object_get_data(G_OBJECT(state->settings),
+                                            "settings-stack");
+        if (stack != NULL &&
+            strcmp(gtk_stack_get_visible_child_name(stack), "menu") != 0) {
+            gtk_stack_set_visible_child_name(stack, "menu");
+        } else {
+            shell_keyboard_command("entry", "off");
+            gtk_widget_set_visible(state->settings, FALSE);
+        }
     } else {
         /* A phone Back gesture must not terminate the desktop session. */
         return GDK_EVENT_STOP;
@@ -98,7 +106,7 @@ static GtkWidget *make_shortcut(ShellState *state, int action,
     GtkWidget *text = gtk_label_new(label);
     gtk_label_set_ellipsize(GTK_LABEL(text), PANGO_ELLIPSIZE_END);
     gtk_widget_add_css_class(button, "desktop-shortcut");
-    gtk_widget_set_size_request(button, 130, 130);
+    gtk_widget_set_size_request(button, 92, 112);
     gtk_button_set_child(GTK_BUTTON(button), content);
     gtk_box_append(GTK_BOX(content), badge);
     gtk_box_append(GTK_BOX(content), text);
@@ -107,10 +115,21 @@ static GtkWidget *make_shortcut(ShellState *state, int action,
     return button;
 }
 
-static void add_grid_button(GtkGrid *grid, GtkWidget *button,
-                            int index, int columns)
+static void quick_settings_toggle(ShellState *state);
+
+static void statusbar_clicked(GtkGestureClick *gesture, int presses,
+                              double x, double y, gpointer data)
 {
-    gtk_grid_attach(grid, button, index % columns, index / columns, 1, 1);
+    quick_settings_toggle(data);
+    (void)gesture; (void)presses; (void)x; (void)y;
+}
+
+static void statusbar_swiped(GtkGestureSwipe *gesture,
+                             double velocity_x, double velocity_y,
+                             gpointer data)
+{
+    if (velocity_y > 0) quick_settings_toggle(data);
+    (void)gesture; (void)velocity_x;
 }
 
 static GtkWidget *make_panel(ShellState *state)
@@ -122,26 +141,25 @@ static GtkWidget *make_panel(ShellState *state)
     GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     GtkWidget *clock = gtk_label_new("00:00");
     gtk_widget_add_css_class(clock, "status-clock");
+    gtk_box_append(GTK_BOX(left), clock);
+    gtk_widget_set_halign(left, GTK_ALIGN_START);
     GtkWidget *network = gtk_label_new("Wi-Fi --");
     gtk_widget_add_css_class(network, "status-network");
-    gtk_box_append(GTK_BOX(left), clock);
-    gtk_box_append(GTK_BOX(left), network);
-    gtk_widget_set_halign(left, GTK_ALIGN_START);
     GtkWidget *battery = gtk_label_new("BAT --");
     gtk_widget_add_css_class(battery, "status-battery");
-    GtkWidget *keyboard = gtk_button_new_with_label("kbd");
-    gtk_widget_add_css_class(keyboard, "keyboard-toggle");
-    g_signal_connect(keyboard, "clicked", G_CALLBACK(shortcut_clicked), state);
-    g_object_set_data(G_OBJECT(keyboard), "action",
-                      GINT_TO_POINTER(SHELL_ACTION_KEYBOARD));
-    gtk_widget_set_halign(keyboard, GTK_ALIGN_END);
     gtk_box_append(GTK_BOX(panel), left);
     GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_halign(right, GTK_ALIGN_END);
     gtk_widget_set_hexpand(right, TRUE);
+    gtk_box_append(GTK_BOX(right), network);
     gtk_box_append(GTK_BOX(right), battery);
-    gtk_box_append(GTK_BOX(right), keyboard);
     gtk_box_append(GTK_BOX(panel), right);
+    GtkGesture *tap = gtk_gesture_click_new();
+    g_signal_connect(tap, "released", G_CALLBACK(statusbar_clicked), state);
+    gtk_widget_add_controller(panel, GTK_EVENT_CONTROLLER(tap));
+    GtkGesture *swipe = gtk_gesture_swipe_new();
+    g_signal_connect(swipe, "swipe", G_CALLBACK(statusbar_swiped), state);
+    gtk_widget_add_controller(panel, GTK_EVENT_CONTROLLER(swipe));
     g_object_set_data(G_OBJECT(panel), "status-clock", clock);
     g_object_set_data(G_OBJECT(panel), "status-network", network);
     g_object_set_data(G_OBJECT(panel), "status-battery", battery);
@@ -150,97 +168,6 @@ static GtkWidget *make_panel(ShellState *state)
     state->status_network = network;
     state->status_telemetry = battery;
     return panel;
-}
-
-static int status_cpu_sample(ShellState *state)
-{
-    FILE *file = fopen("/proc/stat", "r");
-    if (file == NULL) {
-        return -1;
-    }
-    guint64 user = 0, nice = 0, system = 0, idle = 0;
-    guint64 iowait = 0, irq = 0, softirq = 0, steal = 0;
-    char label[16];
-    if (fscanf(file, "%15s %" SCNu64 " %" SCNu64 " %" SCNu64
-               " %" SCNu64 " %" SCNu64 " %" SCNu64 " %" SCNu64
-               " %" SCNu64,
-               label, &user, &nice, &system, &idle, &iowait,
-               &irq, &softirq, &steal) < 5) {
-        fclose(file);
-        return -1;
-    }
-    fclose(file);
-    guint64 total = user + nice + system + idle + iowait + irq + softirq + steal;
-    guint64 used = total - idle;
-    guint64 previous_total = state->status_cpu_total;
-    guint64 previous_idle = state->status_cpu_idle;
-    state->status_cpu_total = total;
-    state->status_cpu_idle = idle;
-    if (previous_total == 0 || total <= previous_total) {
-        return -1;
-    }
-    guint64 delta_total = total - previous_total;
-    guint64 delta_idle = idle - previous_idle;
-    if (delta_idle > delta_total) {
-        delta_idle = delta_total;
-    }
-    (void)used;
-    if (delta_total == 0) {
-        return -1;
-    }
-    return (int)((delta_total - delta_idle) * 100 / delta_total);
-}
-
-static int status_ram_percent(void)
-{
-    FILE *file = fopen("/proc/meminfo", "r");
-    if (file == NULL) {
-        return -1;
-    }
-    unsigned long total = 0, available = 0;
-    unsigned long free_kb = 0, buffers = 0, cached = 0;
-    char key[32];
-    unsigned long value;
-    char unit[16];
-    while (fscanf(file, "%31s %lu %15s", key, &value, unit) == 3) {
-        if (strcmp(key, "MemTotal:") == 0) {
-            total = value;
-        } else if (strcmp(key, "MemAvailable:") == 0) {
-            available = value;
-        } else if (strcmp(key, "MemFree:") == 0) {
-            free_kb = value;
-        } else if (strcmp(key, "Buffers:") == 0) {
-            buffers = value;
-        } else if (strcmp(key, "Cached:") == 0) {
-            cached = value;
-        }
-        if (total != 0 && available != 0) {
-            break;
-        }
-    }
-    fclose(file);
-    if (total == 0) {
-        return -1;
-    }
-    if (available == 0) {
-        available = free_kb + buffers + cached;
-    }
-    unsigned long used = total > available ? total - available : 0;
-    return (int)(used * 100 / total);
-}
-
-static int status_disk_percent(void)
-{
-    struct statvfs info;
-    if (statvfs("/", &info) != 0 || info.f_blocks == 0) {
-        return -1;
-    }
-    unsigned long long used = info.f_blocks - info.f_bfree;
-    unsigned long long total = used + info.f_bavail;
-    if (total == 0) {
-        return -1;
-    }
-    return (int)(used * 100 / total);
 }
 
 static int status_battery(char *mark, size_t mark_size)
@@ -322,16 +249,44 @@ static gboolean status_refresh(gpointer data)
         gtk_label_set_text(GTK_LABEL(state->status_clock),
                            time_text != NULL ? time_text : "--:--");
     }
+    if (state->home_clock != NULL) {
+        gtk_label_set_text(GTK_LABEL(state->home_clock),
+                           time_text != NULL ? time_text : "--:--");
+    }
     g_free(time_text);
+    if (state->home_date != NULL) {
+        GDateTime *date = g_date_time_new_now_local();
+        char *date_text = g_date_time_format(date, "%A, %B %e");
+        gtk_label_set_text(GTK_LABEL(state->home_date),
+                           date_text != NULL ? date_text : "");
+        g_free(date_text);
+        g_date_time_unref(date);
+    }
 
     char battery_mark[8] = "";
     int battery = status_battery(battery_mark, sizeof(battery_mark));
     char battery_text[32];
-    g_snprintf(battery_text, sizeof(battery_text),
-               battery >= 0 ? "BAT %d%%%s" : "BAT --",
-               battery, battery_mark[0] != '\0' ? "*" : "");
+    if (battery >= 0) {
+        g_snprintf(battery_text, sizeof(battery_text),
+                   "BAT %d%%%s", battery,
+                   battery_mark[0] != '\0' ? " *" : "");
+    } else {
+        g_snprintf(battery_text, sizeof(battery_text), "BAT --");
+    }
     if (state->status_telemetry != NULL) {
         gtk_label_set_text(GTK_LABEL(state->status_telemetry), battery_text);
+    }
+    if (state->quick_battery != NULL) {
+        char quick_text[64];
+        if (battery >= 0) {
+            g_snprintf(quick_text, sizeof(quick_text),
+                       "Battery %d%%%s", battery,
+                       battery_mark[0] != '\0' ? " - charging" : "");
+        } else {
+            g_snprintf(quick_text, sizeof(quick_text),
+                       "Battery status unavailable");
+        }
+        gtk_label_set_text(GTK_LABEL(state->quick_battery), quick_text);
     }
 
     if (state->status_wifi_process == NULL) {
@@ -375,12 +330,61 @@ static void home_search_entered(GtkEventControllerFocus *controller,
 
 static int app_is_pinned(const Application *app)
 {
-    const char *name = app->name;
-    return !g_ascii_strcasecmp(name, "Terminal") ||
-           !g_ascii_strcasecmp(name, "Files") ||
-           !g_ascii_strcasecmp(name, "Browser") ||
-           !g_ascii_strcasecmp(name, "Settings") ||
-           !g_ascii_strcasecmp(name, "Packages");
+    return app->pinned;
+}
+
+static void render_home_grid(ShellState *state);
+
+static void save_pinned_apps(ShellState *state)
+{
+    const char *home = g_get_home_dir();
+    char directory[1200], path[1200];
+    if (snprintf(directory, sizeof(directory), "%s/.config/fieldm", home) >=
+            (int)sizeof(directory) ||
+        snprintf(path, sizeof(path), "%s/pinned-apps", directory) >=
+            (int)sizeof(path) ||
+        g_mkdir_with_parents(directory, 0700) != 0) {
+        shell_show_error(GTK_WINDOW(state->desktop_window),
+                         "Could not save pinned apps.");
+        return;
+    }
+    FILE *file = fopen(path, "w");
+    if (file == NULL) {
+        shell_show_error(GTK_WINDOW(state->desktop_window),
+                         "Could not save pinned apps.");
+        return;
+    }
+    int failed = 0;
+    for (size_t i = 0; i < state->application_count; ++i) {
+        Application *app = &state->applications[i];
+        if (app->pinned && fprintf(file, "%s\n", app->desktop_id) < 0) {
+            failed = 1;
+            break;
+        }
+    }
+    if (fclose(file) != 0) failed = 1;
+    if (failed) {
+        shell_show_error(GTK_WINDOW(state->desktop_window),
+                         "Could not save pinned apps.");
+    }
+}
+
+static void app_long_pressed(GtkGestureLongPress *gesture,
+                             double x, double y, gpointer data)
+{
+    ShellState *state = data;
+    GtkWidget *button = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(gesture));
+    guint index = GPOINTER_TO_UINT(
+        g_object_get_data(G_OBJECT(button), "application-index"));
+    if (index >= state->application_count) return;
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    state->applications[index].pinned = !state->applications[index].pinned;
+    gtk_widget_set_tooltip_text(button,
+        state->applications[index].pinned ? "Pinned to Home" : "Unpinned");
+    save_pinned_apps(state);
+    render_home_grid(state);
+    (void)x; (void)y;
 }
 
 static void home_app_clicked(GtkButton *button, gpointer data)
@@ -392,10 +396,41 @@ static void home_app_clicked(GtkButton *button, gpointer data)
         application_launch_with_catalog(&state->applications[index],
                                         state->applications,
                                         state->application_count);
+        if (state->launcher != NULL) launcher_close(state);
     }
 }
 
-static void render_home_grid(ShellState *state, const char *query)
+static GtkWidget *application_tile(ShellState *state, size_t index)
+{
+    Application *app = &state->applications[index];
+    GtkWidget *button = gtk_button_new();
+    gtk_widget_add_css_class(button, "app-grid-button");
+    gtk_widget_set_size_request(button, 132, 116);
+    gtk_widget_set_halign(button, GTK_ALIGN_START);
+    gtk_widget_set_valign(button, GTK_ALIGN_START);
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_halign(content, GTK_ALIGN_CENTER);
+    GtkWidget *badge = shell_make_icon_badge(app->name, app->icon);
+    GtkWidget *label = gtk_label_new(app->name);
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.5f);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_box_append(GTK_BOX(content), badge);
+    gtk_box_append(GTK_BOX(content), label);
+    gtk_button_set_child(GTK_BUTTON(button), content);
+    g_object_set_data(G_OBJECT(button), "application-index",
+                      GUINT_TO_POINTER((guint)index));
+    g_signal_connect(button, "clicked",
+                     G_CALLBACK(home_app_clicked), state);
+    GtkGesture *long_press = gtk_gesture_long_press_new();
+    gtk_gesture_single_set_exclusive(GTK_GESTURE_SINGLE(long_press), TRUE);
+    g_signal_connect(long_press, "pressed",
+                     G_CALLBACK(app_long_pressed), state);
+    gtk_widget_add_controller(button, GTK_EVENT_CONTROLLER(long_press));
+    return button;
+}
+
+static void render_home_grid(ShellState *state)
 {
     if (state->home_grid == NULL) {
         return;
@@ -405,49 +440,57 @@ static void render_home_grid(ShellState *state, const char *query)
         gtk_grid_remove(GTK_GRID(state->home_grid), child);
     }
     guint shown = 0;
-    for (int pass = 0; pass < 2 && shown < state->application_count; ++pass) {
-        for (size_t i = 0; i < state->application_count; ++i) {
-            Application *app = &state->applications[i];
-            if ((pass == 0) != app_is_pinned(app)) {
-                continue;
-            }
-            if (query != NULL && query[0] != '\0' &&
-                !application_matches(app, query)) {
-                continue;
-            }
-            GtkWidget *button = gtk_button_new();
-            gtk_widget_add_css_class(button, "app-grid-button");
-            gtk_widget_set_size_request(button, 190, 180);
-            GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-            GtkWidget *badge = shell_make_icon_badge(app->name, app->icon);
-            GtkWidget *label = gtk_label_new(app->name);
-            gtk_label_set_wrap(GTK_LABEL(label), TRUE);
-            gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-            gtk_box_append(GTK_BOX(content), badge);
-            gtk_box_append(GTK_BOX(content), label);
-            gtk_button_set_child(GTK_BUTTON(button), content);
-            g_object_set_data(G_OBJECT(button), "application-index",
-                              GUINT_TO_POINTER((guint)i));
-            g_signal_connect(button, "clicked",
-                             G_CALLBACK(home_app_clicked), state);
-            gtk_grid_attach(GTK_GRID(state->home_grid), button,
-                            (int)(shown % 3), (int)(shown / 3), 1, 1);
-            ++shown;
-        }
+    for (size_t i = 0; i < state->application_count; ++i) {
+        if (!app_is_pinned(&state->applications[i])) continue;
+        gtk_grid_attach(GTK_GRID(state->home_grid),
+                        application_tile(state, i), (int)(shown % 3),
+                        (int)(shown / 3), 1, 1);
+        ++shown;
     }
 }
 
-static void home_search_changed(GtkEditable *editable, gpointer data)
+static void render_drawer_grid(ShellState *state, const char *query)
 {
-    render_home_grid(data, gtk_editable_get_text(editable));
+    if (state->drawer_grid == NULL) return;
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(state->drawer_grid)) != NULL) {
+        gtk_grid_remove(GTK_GRID(state->drawer_grid), child);
+    }
+    guint shown = 0;
+    for (size_t i = 0; i < state->application_count; ++i) {
+        Application *app = &state->applications[i];
+        if (query != NULL && query[0] != '\0' &&
+            !application_matches(app, query)) continue;
+        GtkWidget *button = application_tile(state, i);
+        gtk_grid_attach(GTK_GRID(state->drawer_grid), button,
+                        (int)(shown % 4), (int)(shown / 4), 1, 1);
+        ++shown;
+    }
+}
+
+static void drawer_search_changed(GtkEditable *editable, gpointer data)
+{
+    render_drawer_grid(data, gtk_editable_get_text(editable));
 }
 
 static void recents_close_one(GtkButton *button, gpointer data)
 {
     (void)button;
-    Window window = (Window)GPOINTER_TO_UINT(data);
+    Window frame = (Window)GPOINTER_TO_UINT(data);
     GdkDisplay *gdk_display = gdk_display_get_default();
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     Display *display = gdk_x11_display_get_xdisplay(GDK_X11_DISPLAY(gdk_display));
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    Window root_return, parent_return, *children = NULL;
+    unsigned int count = 0;
+    if (!XQueryTree(display, frame, &root_return, &parent_return,
+                    &children, &count) ||
+        count == 0) {
+        if (children != NULL) XFree(children);
+        return;
+    }
+    Window window = children[0];
+    XFree(children);
     Atom delete = XInternAtom(display,
                               "WM_DELETE_WINDOW", False);
     XEvent event;
@@ -469,11 +512,18 @@ static void recents_switch(GtkListBox *list, GtkListBoxRow *row, gpointer data)
     (void)list;
     ShellState *state = data;
     if (row == NULL) return;
-    Window window = (Window)GPOINTER_TO_UINT(
+    Window frame = (Window)GPOINTER_TO_UINT(
         g_object_get_data(G_OBJECT(row), "x-window"));
-    if (window != None) {
-        XRaiseWindow(state->xdisplay, window);
-        XSetInputFocus(state->xdisplay, window, RevertToPointerRoot, CurrentTime);
+    if (frame != None) {
+        Window root_return, parent_return, *children = NULL;
+        unsigned int count = 0;
+        XRaiseWindow(state->xdisplay, frame);
+        if (XQueryTree(state->xdisplay, frame, &root_return, &parent_return,
+                       &children, &count) && count > 0) {
+            XSetInputFocus(state->xdisplay, children[0],
+                           RevertToPointerRoot, CurrentTime);
+        }
+        if (children != NULL) XFree(children);
         XFlush(state->xdisplay);
     }
     recents_close(state);
@@ -502,11 +552,23 @@ static void recents_close_all(GtkButton *button, gpointer data)
 
 void recents_open(ShellState *state)
 {
+    if (state->launcher != NULL) launcher_close(state);
+    if (state->quick_settings_open) {
+        state->quick_settings_open = 0;
+        if (state->home_stack != NULL) {
+            gtk_stack_set_visible_child_name(
+                GTK_STACK(state->home_stack), "home");
+        }
+    }
+    if (state->settings != NULL) {
+        shell_keyboard_command("entry", "off");
+        gtk_widget_set_visible(state->settings, FALSE);
+    }
     GtkWidget *list = NULL;
     if (state->recents == NULL) {
         GtkWidget *window = gtk_application_window_new(state->application);
         state->recents = window;
-        gtk_window_set_title(GTK_WINDOW(window), "Open apps");
+        gtk_window_set_title(GTK_WINDOW(window), "Recents");
         gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
         gtk_window_set_default_size(GTK_WINDOW(window),
                                     state->screen.width,
@@ -517,7 +579,7 @@ void recents_open(ShellState *state)
         gtk_widget_set_margin_end(root, 12);
         gtk_widget_set_margin_top(root, 12);
         gtk_widget_set_margin_bottom(root, 12);
-        GtkWidget *heading = gtk_label_new("Open apps");
+        GtkWidget *heading = gtk_label_new("Recents");
         gtk_widget_add_css_class(heading, "title-2");
         gtk_box_append(GTK_BOX(root), heading);
         GtkWidget *scroll = gtk_scrolled_window_new();
@@ -526,7 +588,7 @@ void recents_open(ShellState *state)
         gtk_widget_set_name(list, "recents-list");
         gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
         gtk_box_append(GTK_BOX(root), scroll);
-        GtkWidget *close_all = gtk_button_new_with_label("Close all");
+        GtkWidget *close_all = gtk_button_new_with_label("Clear all");
         gtk_widget_set_size_request(close_all, -1, 64);
         g_object_set_data(G_OBJECT(close_all), "recents-list", list);
         g_signal_connect(close_all, "clicked",
@@ -548,16 +610,51 @@ void recents_open(ShellState *state)
     XQueryTree(state->xdisplay, DefaultRootWindow(state->xdisplay),
                &root_return, &parent_return, &children, &count);
     for (unsigned int i = 0; i < count; ++i) {
-        Window window = children[i];
+        Window frame = children[i];
         XWindowAttributes attrs;
-        if (!XGetWindowAttributes(state->xdisplay, window, &attrs) ||
+        if (!XGetWindowAttributes(state->xdisplay, frame, &attrs) ||
             attrs.map_state == IsUnmapped) continue;
         char *name = NULL;
-        XFetchName(state->xdisplay, window, &name);
-        if (name == NULL) continue;
+        XFetchName(state->xdisplay, frame, &name);
+        if (name == NULL || name[0] == '\0') {
+            if (name != NULL) XFree(name);
+            continue;
+        }
         if (strstr(name, "fieldm-kbd") != NULL ||
             strstr(name, "simple-desktop") != NULL ||
-            strstr(name, "ZIRARCH") != NULL) {
+            strstr(name, "ZIRARCH") != NULL ||
+            strstr(name, "FieldM") != NULL) {
+            XFree(name);
+            continue;
+        }
+        Window child_root, child_parent, *app_children = NULL;
+        unsigned int app_count = 0;
+        int shell_window = 0;
+        if (XQueryTree(state->xdisplay, frame, &child_root, &child_parent,
+                       &app_children, &app_count) && app_count > 0) {
+            char *client_name = NULL;
+            XFetchName(state->xdisplay, app_children[0], &client_name);
+            XClassHint class_hint = {0};
+            if (XGetClassHint(state->xdisplay, app_children[0], &class_hint)) {
+                shell_window =
+                    (class_hint.res_name != NULL &&
+                     (strstr(class_hint.res_name, "simple-desktop") != NULL ||
+                      strstr(class_hint.res_name, "field-desktop") != NULL)) ||
+                    (class_hint.res_class != NULL &&
+                     (strstr(class_hint.res_class, "simple-desktop") != NULL ||
+                      strstr(class_hint.res_class, "field-desktop") != NULL));
+                if (class_hint.res_name != NULL) XFree(class_hint.res_name);
+                if (class_hint.res_class != NULL) XFree(class_hint.res_class);
+            }
+            if (client_name != NULL && client_name[0] != '\0') {
+                XFree(name);
+                name = client_name;
+            } else if (client_name != NULL) {
+                XFree(client_name);
+            }
+        }
+        if (app_children != NULL) XFree(app_children);
+        if (shell_window) {
             XFree(name);
             continue;
         }
@@ -569,19 +666,232 @@ void recents_open(ShellState *state)
         GtkWidget *close = gtk_button_new_with_label("X");
         gtk_widget_set_size_request(close, 64, 64);
         g_object_set_data(G_OBJECT(close), "x-window",
-                          GUINT_TO_POINTER((guint)window));
+                          GUINT_TO_POINTER((guint)frame));
         g_signal_connect(close, "clicked",
-                         G_CALLBACK(recents_close_one), GUINT_TO_POINTER(window));
+                         G_CALLBACK(recents_close_one), GUINT_TO_POINTER(frame));
         gtk_box_append(GTK_BOX(box), label);
         gtk_box_append(GTK_BOX(box), close);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
         g_object_set_data(G_OBJECT(row), "x-window",
-                          GUINT_TO_POINTER((guint)window));
+                          GUINT_TO_POINTER((guint)frame));
         gtk_list_box_append(GTK_LIST_BOX(list), row);
         XFree(name);
     }
     if (children != NULL) XFree(children);
     gtk_window_present(GTK_WINDOW(state->recents));
+}
+
+static void quick_settings_close(ShellState *state)
+{
+    state->quick_settings_open = 0;
+    if (state->home_stack != NULL) {
+        gtk_stack_set_visible_child_name(GTK_STACK(state->home_stack), "home");
+    }
+}
+
+static void quick_settings_toggle(ShellState *state)
+{
+    if (state->home_stack == NULL) return;
+    if (state->quick_settings_open) {
+        quick_settings_close(state);
+        return;
+    }
+    if (state->launcher != NULL) launcher_close(state);
+    state->quick_settings_open = 1;
+    gtk_stack_set_visible_child_name(GTK_STACK(state->home_stack), "quick");
+}
+
+static void quick_wifi_clicked(GtkButton *button, gpointer data)
+{
+    ShellState *state = data;
+    quick_settings_close(state);
+    settings_open_section(state, "wifi");
+    (void)button;
+}
+
+static void quick_keyboard_clicked(GtkButton *button, gpointer data)
+{
+    shell_keyboard_command("manual", "toggle");
+    (void)button; (void)data;
+}
+
+static void quick_gear_clicked(GtkButton *button, gpointer data)
+{
+    ShellState *state = data;
+    quick_settings_close(state);
+    settings_open(state);
+    (void)button;
+}
+
+static void quick_brightness_changed(GtkRange *range, gpointer data)
+{
+    int brightness = (int)(gtk_range_get_value(range) * 134.0 / 100.0);
+    FILE *file = fopen("/sys/class/backlight/panel/brightness", "w");
+    if (file == NULL) {
+        shell_show_error(GTK_WINDOW(((ShellState *)data)->desktop_window),
+                         "Could not apply display brightness.");
+        return;
+    }
+    int failed = fprintf(file, "%d", brightness) < 0;
+    if (fclose(file) != 0) failed = 1;
+    if (failed) {
+        shell_show_error(GTK_WINDOW(((ShellState *)data)->desktop_window),
+                         "Could not apply display brightness.");
+    }
+}
+
+static void quick_page_swiped(GtkGestureSwipe *gesture,
+                              double velocity_x, double velocity_y,
+                              gpointer data)
+{
+    if (velocity_y < 0) quick_settings_close(data);
+    (void)gesture; (void)velocity_x;
+}
+
+static GtkWidget *make_quick_settings(ShellState *state)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(page, 16);
+    gtk_widget_set_margin_end(page, 16);
+    gtk_widget_set_margin_top(page, 16);
+    gtk_widget_set_margin_bottom(page, 16);
+    GtkWidget *title = gtk_label_new("Quick settings");
+    gtk_widget_add_css_class(title, "title-1");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    gtk_box_append(GTK_BOX(page), title);
+    GtkWidget *tiles = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(tiles), 12);
+    gtk_grid_set_column_spacing(GTK_GRID(tiles), 12);
+    GtkWidget *wifi = gtk_button_new_with_label("Wi-Fi\nSettings");
+    GtkWidget *keyboard = gtk_button_new_with_label("Keyboard\nShow / hide");
+    GtkWidget *gear = gtk_button_new_with_label("Settings");
+    gtk_widget_set_size_request(wifi, 200, 104);
+    gtk_widget_set_size_request(keyboard, 200, 104);
+    gtk_widget_set_size_request(gear, 200, 104);
+    gtk_grid_attach(GTK_GRID(tiles), wifi, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(tiles), keyboard, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(tiles), gear, 2, 0, 1, 1);
+    g_signal_connect(wifi, "clicked", G_CALLBACK(quick_wifi_clicked), state);
+    g_signal_connect(keyboard, "clicked",
+                     G_CALLBACK(quick_keyboard_clicked), state);
+    g_signal_connect(gear, "clicked", G_CALLBACK(quick_gear_clicked), state);
+    gtk_box_append(GTK_BOX(page), tiles);
+    GtkWidget *brightness_label = gtk_label_new("Brightness");
+    gtk_label_set_xalign(GTK_LABEL(brightness_label), 0.0f);
+    gtk_box_append(GTK_BOX(page), brightness_label);
+    GtkWidget *brightness = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, 5, 100, 5);
+    gtk_range_set_value(GTK_RANGE(brightness), 50);
+    gtk_widget_set_size_request(brightness, -1, 56);
+    g_signal_connect(brightness, "value-changed",
+                     G_CALLBACK(quick_brightness_changed), state);
+    gtk_box_append(GTK_BOX(page), brightness);
+    GtkWidget *battery = gtk_label_new("Battery status unavailable");
+    state->quick_battery = battery;
+    gtk_widget_add_css_class(battery, "muted");
+    gtk_widget_set_halign(battery, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(page), battery);
+    GtkGesture *swipe = gtk_gesture_swipe_new();
+    g_signal_connect(swipe, "swipe", G_CALLBACK(quick_page_swiped), state);
+    gtk_widget_add_controller(page, GTK_EVENT_CONTROLLER(swipe));
+    return page;
+}
+
+static void home_swiped(GtkGestureSwipe *gesture,
+                        double velocity_x, double velocity_y, gpointer data)
+{
+    if (velocity_y < 0) launcher_open(data);
+    (void)gesture; (void)velocity_x;
+}
+
+static void drawer_swiped(GtkGestureSwipe *gesture,
+                         double velocity_x, double velocity_y, gpointer data)
+{
+    if (velocity_y > 0) launcher_close(data);
+    (void)gesture; (void)velocity_x;
+}
+
+static GtkWidget *make_home_page(ShellState *state)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_widget_set_margin_start(page, 16);
+    gtk_widget_set_margin_end(page, 16);
+    gtk_widget_set_margin_top(page, 20);
+    gtk_widget_set_margin_bottom(page, 12);
+    state->home_clock = gtk_label_new("--:--");
+    gtk_widget_add_css_class(state->home_clock, "home-clock");
+    gtk_label_set_xalign(GTK_LABEL(state->home_clock), 0.0f);
+    state->home_date = gtk_label_new("");
+    gtk_widget_add_css_class(state->home_date, "home-date");
+    gtk_label_set_xalign(GTK_LABEL(state->home_date), 0.0f);
+    gtk_box_append(GTK_BOX(page), state->home_clock);
+    gtk_box_append(GTK_BOX(page), state->home_date);
+    GtkWidget *pinned_label = gtk_label_new("Pinned");
+    gtk_widget_add_css_class(pinned_label, "title-2");
+    gtk_label_set_xalign(GTK_LABEL(pinned_label), 0.0f);
+    gtk_box_append(GTK_BOX(page), pinned_label);
+    GtkWidget *pinned_scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(pinned_scroll, TRUE);
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
+    state->home_grid = grid;
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(pinned_scroll), grid);
+    gtk_box_append(GTK_BOX(page), pinned_scroll);
+    render_home_grid(state);
+    GtkWidget *dock = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(dock, "home-dock");
+    gtk_widget_set_halign(dock, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(dock), make_shortcut(
+        state, SHELL_ACTION_TERMINAL, "Terminal", NULL));
+    gtk_box_append(GTK_BOX(dock), make_shortcut(
+        state, SHELL_ACTION_FILES, "Files", NULL));
+    gtk_box_append(GTK_BOX(dock), make_shortcut(
+        state, SHELL_ACTION_BROWSER, "Browser", NULL));
+    gtk_box_append(GTK_BOX(dock), make_shortcut(
+        state, SHELL_ACTION_SETTINGS, "Settings", NULL));
+    gtk_box_append(GTK_BOX(dock), make_shortcut(
+        state, SHELL_ACTION_APPS, "Apps", NULL));
+    gtk_box_append(GTK_BOX(page), dock);
+    GtkGesture *swipe = gtk_gesture_swipe_new();
+    g_signal_connect(swipe, "swipe", G_CALLBACK(home_swiped), state);
+    gtk_widget_add_controller(page, GTK_EVENT_CONTROLLER(swipe));
+    return page;
+}
+
+static GtkWidget *make_drawer_page(ShellState *state)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(page, 16);
+    gtk_widget_set_margin_end(page, 16);
+    gtk_widget_set_margin_top(page, 12);
+    gtk_widget_set_margin_bottom(page, 12);
+    GtkWidget *title = gtk_label_new("All apps");
+    gtk_widget_add_css_class(title, "title-2");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.0f);
+    gtk_box_append(GTK_BOX(page), title);
+    state->drawer_search = gtk_search_entry_new();
+    gtk_search_entry_set_placeholder_text(
+        GTK_SEARCH_ENTRY(state->drawer_search), "Search apps");
+    GtkEventController *focus = gtk_event_controller_focus_new();
+    g_signal_connect(focus, "enter", G_CALLBACK(home_search_entered), state);
+    gtk_widget_add_controller(state->drawer_search, focus);
+    g_signal_connect(state->drawer_search, "search-changed",
+                     G_CALLBACK(drawer_search_changed), state);
+    gtk_box_append(GTK_BOX(page), state->drawer_search);
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scroll, TRUE);
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    state->drawer_grid = grid;
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
+    gtk_box_append(GTK_BOX(page), scroll);
+    render_drawer_grid(state, "");
+    GtkGesture *swipe = gtk_gesture_swipe_new();
+    g_signal_connect(swipe, "swipe", G_CALLBACK(drawer_swiped), state);
+    gtk_widget_add_controller(page, GTK_EVENT_CONTROLLER(swipe));
+    return page;
 }
 
 static int set_desktop_window_type(ShellState *state, GtkWidget *window)
@@ -656,42 +966,21 @@ static GtkWidget *make_desktop_window(ShellState *state)
         state->status_panel = NULL;
     }
 
-    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
-    gtk_widget_set_margin_start(body, 20);
-    gtk_widget_set_margin_top(body, 18);
-    gtk_widget_set_margin_end(body, 20);
-    gtk_widget_set_margin_bottom(body, 12);
+    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_vexpand(body, TRUE);
     gtk_box_append(GTK_BOX(surface), body);
-
-    GtkWidget *watermark = gtk_label_new("ZIRARCH");
-    gtk_widget_add_css_class(watermark, "home-watermark");
-    gtk_label_set_xalign(GTK_LABEL(watermark), 0.0f);
-    gtk_widget_set_margin_bottom(watermark, 8);
-    gtk_box_append(GTK_BOX(body), watermark);
-
-    state->home_search = gtk_search_entry_new();
-    gtk_search_entry_set_placeholder_text(
-        GTK_SEARCH_ENTRY(state->home_search), "Search apps");
-    GtkEventController *entry_focus = gtk_event_controller_focus_new();
-    g_signal_connect(entry_focus, "enter",
-                     G_CALLBACK(home_search_entered), state);
-    gtk_widget_add_controller(state->home_search, entry_focus);
-    g_signal_connect(state->home_search, "search-changed",
-                     G_CALLBACK(home_search_changed), state);
-    gtk_box_append(GTK_BOX(body), state->home_search);
-
-    GtkWidget *scroll = gtk_scrolled_window_new();
-    gtk_widget_set_vexpand(scroll, TRUE);
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    gtk_widget_set_halign(grid, GTK_ALIGN_FILL);
-    gtk_widget_set_hexpand(grid, TRUE);
-    state->home_grid = grid;
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
-    gtk_box_append(GTK_BOX(body), scroll);
-    render_home_grid(state, "");
+    state->home_stack = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(state->home_stack),
+                                  GTK_STACK_TRANSITION_TYPE_NONE);
+    gtk_widget_set_vexpand(state->home_stack, TRUE);
+    gtk_stack_add_named(GTK_STACK(state->home_stack),
+                        make_home_page(state), "home");
+    gtk_stack_add_named(GTK_STACK(state->home_stack),
+                        make_drawer_page(state), "drawer");
+    gtk_stack_add_named(GTK_STACK(state->home_stack),
+                        make_quick_settings(state), "quick");
+    gtk_stack_set_visible_child_name(GTK_STACK(state->home_stack), "home");
+    gtk_box_append(GTK_BOX(body), state->home_stack);
 
     if (!set_desktop_window_type(state, window)) {
         gtk_window_destroy(GTK_WINDOW(window));
@@ -722,6 +1011,16 @@ void shell_refresh_desktop_windows(ShellState *state)
         gtk_window_set_transient_for(GTK_WINDOW(state->launcher), NULL);
     }
     state->wallpaper_picture = NULL;
+    state->home_stack = NULL;
+    state->home_grid = NULL;
+    state->home_search = NULL;
+    state->drawer_search = NULL;
+    state->drawer_grid = NULL;
+    state->home_clock = NULL;
+    state->home_date = NULL;
+    state->quick_battery = NULL;
+    state->launcher = NULL;
+    state->quick_settings_open = 0;
     if (state->status_source != 0) {
         g_source_remove(state->status_source);
         state->status_source = 0;
