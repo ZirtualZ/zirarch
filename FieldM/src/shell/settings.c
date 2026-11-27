@@ -1,15 +1,15 @@
 #include "gtk_shell_internal.h"
 #include "icon_themes.h"
+#include "wifi.h"
 
 static gboolean window_closed(GtkWindow *window, gpointer data)
 {
     ShellState *state = data;
     if (state->settings == GTK_WIDGET(window)) {
-        state->settings = NULL;
-        state->wallpaper_toggle = NULL;
-        state->icon_theme_dropdown = NULL;
+        shell_keyboard_command("entry", "off");
+        gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
     }
-    return GDK_EVENT_PROPAGATE;
+    return GDK_EVENT_STOP;
 }
 
 static gboolean key_pressed(GtkEventControllerKey *controller,
@@ -24,11 +24,9 @@ static gboolean key_pressed(GtkEventControllerKey *controller,
         return GDK_EVENT_PROPAGATE;
     }
     GtkWidget *window = state->settings;
-    state->settings = NULL;
-    state->wallpaper_toggle = NULL;
-    state->icon_theme_dropdown = NULL;
     if (window != NULL) {
-        gtk_window_destroy(GTK_WINDOW(window));
+        shell_keyboard_command("entry", "off");
+        gtk_widget_set_visible(window, FALSE);
     }
     return GDK_EVENT_STOP;
 }
@@ -349,20 +347,25 @@ void settings_open(ShellState *state)
     }
     GtkWidget *window = gtk_application_window_new(state->application);
     state->settings = window;
+    gtk_widget_add_css_class(window, "fieldm-menu");
     gtk_window_set_title(GTK_WINDOW(window), "Field Desktop Settings");
     gtk_window_set_default_size(GTK_WINDOW(window), 688, 1080);
+    gtk_window_set_hide_on_close(GTK_WINDOW(window), TRUE);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_start(box, 18);
     gtk_widget_set_margin_end(box, 18);
     gtk_widget_set_margin_top(box, 18);
     gtk_widget_set_margin_bottom(box, 18);
-    GtkWidget *heading = gtk_label_new("Settings");
+    GtkWidget *heading = gtk_label_new("Zirarch Settings");
     gtk_widget_add_css_class(heading, "title-1");
     gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
     GtkWidget *notebook = gtk_notebook_new();
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook),
                              make_appearance_page(state),
                              gtk_label_new("Appearance"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook),
+                             wifi_page_new(GTK_WINDOW(window)),
+                             gtk_label_new("Wi-Fi"));
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook),
                              make_desktop_page(state),
                              gtk_label_new("Desktop"));

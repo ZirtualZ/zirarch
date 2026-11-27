@@ -463,7 +463,7 @@ The stock Android SYSTEM partition `/dev/mmcblk0p19` contains these
 files below `/system/etc/wifi`. Extract the exact files read-only with:
 
 ```sh
-SSH_IDENTITY=/tmp/zirarch_key \
+SSH_IDENTITY=$HOME/.ssh/zirarch_ed25519 \
 SSH_TARGET=root@192.168.7.2 \
   kernel/extract-on5-wifi.sh
 ```
@@ -561,7 +561,7 @@ builds/zirarch-fbconsole
 Build the Alpine rootfs:
 
 ```sh
-SSH_IDENTITY=/tmp/zirarch_key \
+SSH_IDENTITY=$HOME/.ssh/zirarch_ed25519 \
 SSH_TARGET=root@192.168.7.2 \
   kernel/extract-on5-wifi.sh
 kernel/prepare-on5-rootfs.sh
@@ -711,18 +711,23 @@ The fork removes desktop-item and multi-monitor modules and introduces
 single-screen `screen_layout`. It targets one 720x1280 portrait screen,
 maximizes managed windows, uses a 64-pixel titlebar, 52-pixel close
 target, 88-pixel taskbar, enlarged GTK controls, touch drag handling,
-and a Keyboard button that toggles `svkbd-mobile-intl`.
+and focus-driven on-screen keyboard leases.
 
-The mobile shell uses three equally sized 56px top-panel buttons
-(`Applications`, `Keyboard`, `Settings`) and a deterministic 56px
+The mobile shell uses two equally sized 56px top-panel buttons
+(`Applications`, `Settings`) and a deterministic 56px
 letter badge for every launcher row, so missing icon themes still
-produce clear, consistent targets. The launcher search and a managed
-terminal each acquire an automatic keyboard lease through
-`fieldm-keyboard`. A terminal gets 708x816 of usable client area,
-`svkbd` is unmanaged and pinned to 720x300 at y=892, and the 88px
-taskbar remains visible at y=1192. Closing the launcher or last terminal
-releases its lease and hides svkbd. A manual Keyboard toggle is an
-independent lease and therefore remains visible until toggled off.
+produce clear, consistent targets. Text fields and terminal windows acquire
+keyboard leases through `fieldm-keyboard`. A terminal keeps 708x816 of
+client space above the keyboard. The keyboard is unmanaged and pinned to
+720x300 at y=892, and the 88px taskbar remains visible at y=1192. Releasing
+the last lease hides the keyboard without ending its process.
+
+On Debian, `fieldm-onboard` wraps Onboard's Unicode key synthesis with
+GTK keysym conversion because the packaged virtkey binding fails under
+Python 3.13 for symbols. The Debian image also installs
+`gsettings-desktop-schemas` and AT-SPI introspection data required by Onboard.
+FieldM prewarms one hidden `fieldm-onboard` process inside the session D-Bus,
+then uses Onboard's Show/Hide methods with a short focus-release debounce.
 
 `fieldm-terminal` wraps xterm with DejaVu Sans Mono and the mobile
 colors/font size. The corresponding `terminal.desktop` entry is used by

@@ -1,0 +1,32 @@
+#!/usr/bin/python3
+
+import sys
+
+import gi
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gio", "2.0")
+from gi.repository import Gdk, Gio
+
+from Onboard.Exceptions import chain_handler
+from Onboard.Keyboard import KeySynthVirtkey
+
+
+def press_unicode(self, char):
+    if self._vk and char:
+        self.press_keysym(Gdk.unicode_to_keyval(ord(char)))
+
+
+def release_unicode(self, char):
+    if self._vk and char:
+        self.release_keysym(Gdk.unicode_to_keyval(ord(char)))
+
+
+KeySynthVirtkey.press_unicode = press_unicode
+KeySynthVirtkey.release_unicode = release_unicode
+sys.excepthook = chain_handler
+
+Gio.Settings.new("org.onboard").set_boolean("start-minimized", True)
+
+from Onboard.OnboardGtk import OnboardGtk
+
+OnboardGtk()

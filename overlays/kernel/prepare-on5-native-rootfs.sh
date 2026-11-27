@@ -48,7 +48,7 @@ PACKAGES="alpine-baselayout apk-tools openrc openssh fastfetch \
 	ncurses-terminfo ncurses kbd htop nano evtest xterm \
 	xorg-server xf86-video-fbdev xf86-input-evdev xinit \
 	svkbd buffyboard xrandr mesa-dri-gallium dbus libcap-setcap \
-	ttf-dejavu \
+	ttf-dejavu e2fsprogs \
 	gcc musl-dev make pkgconf gtk4.0-dev libx11-dev \
 	libxrandr-dev libxft-dev"
 
@@ -104,6 +104,14 @@ EOF
 cat > "$ROOT_DIR/etc/resolv.conf" <<EOF
 nameserver 1.1.1.1
 nameserver 8.8.8.8
+EOF
+cat > "$ROOT_DIR/etc/fstab" <<EOF
+# Root is mounted read-write by the initramfs switch_root before OpenRC starts.
+/dev/mmcblk0p19 / ext4 rw,relatime 0 0
+proc /proc proc defaults 0 0
+sysfs /sys sysfs defaults 0 0
+devpts /dev/pts devpts gid=5,mode=620 0 0
+tmpfs /run tmpfs mode=755,nodev,nosuid 0 0
 EOF
 cat > "$ROOT_DIR/etc/inittab" <<EOF
 ::sysinit:/sbin/openrc sysinit
@@ -302,6 +310,9 @@ for service in killprocs mount-ro savecache; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		ln -sfn "/etc/init.d/$service" "$ROOT_DIR/etc/runlevels/shutdown/$service"
 done
+
+[ -e "$ROOT_DIR/etc/init.d/fsck" ] &&
+	rm -f "$ROOT_DIR/etc/runlevels/boot/fsck"
 
 sed -i 's/^root:\*:/root::/' "$ROOT_DIR/etc/shadow"
 if [ -n "$SSH_PUBLIC_KEY" ]; then

@@ -25,6 +25,7 @@ const AppearanceTheme *appearance_theme_at(size_t index);
 size_t appearance_background_count(void);
 const char *appearance_background_name(int index);
 const char *appearance_background_color(int index);
+const char *appearance_contrast_foreground(const char *background);
 int appearance_select_theme(Appearance *appearance, int index);
 int appearance_select_background(Appearance *appearance, int index);
 int appearance_select_image(Appearance *appearance, const char *path);

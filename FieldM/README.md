@@ -8,16 +8,18 @@ and drag gestures directly through normal X11 button events.
 
 ## Features
 
-- GTK shell with a three-button mobile panel and large common launch shortcuts.
+- GTK shell with a two-button mobile panel and large common launch shortcuts.
 - Searchable application launcher, including the window manager's `Alt+Space`
   shortcut and single-tap activation.
 - Window manager with large title bars and close targets, portrait-screen
   maximization, taskbar switching, touch drag movement/resizing, and fullscreen
   handling.
-- A **Keyboard** panel button and automatic keyboard leases for text entry and
-  terminal windows.
-- Settings for color themes, solid backgrounds, image wallpaper, panel, and
-  taskbar.
+- A prewarmed on-screen keyboard that appears for focused text entries and
+  managed terminal windows.
+- Settings for color themes, solid backgrounds, image wallpaper, panel,
+  taskbar, and asynchronous Wi-Fi scanning/connection.
+- A separate `fieldm-packages` touch-first app for Debian package search,
+  installation, removal, list updates, and streamed apt output.
 
 Field Desktop launches installed applications rather than bundling a browser,
 file manager, or terminal. The project targets Linux and X11.
@@ -38,9 +40,13 @@ available.
 FieldM delegates keyboard lifecycle to `/usr/bin/fieldm-keyboard`; it does not
 manage `svkbd` processes directly. The runtime helper should support:
 
-- `fieldm-keyboard entry on|off` while the launcher search field owns focus.
-- `fieldm-keyboard manual toggle` from the panel button.
-- `fieldm-keyboard terminal on|off` while managed terminal windows exist.
+- `fieldm-keyboard entry on|off` while a FieldM text field owns focus.
+- `fieldm-keyboard terminal on|off` while a managed terminal exists.
+
+On Debian, `fieldm-onboard` wraps Onboard with a GTK keysym conversion because
+Debian 13 Onboard's Python 3.13 virtkey Unicode call fails for symbol keys.
+The helper keeps one hidden process warm and toggles it over D-Bus instead of
+restarting Onboard for every focus change.
 
 The helper is required only at runtime and is intentionally outside this
 project's build/install scope.

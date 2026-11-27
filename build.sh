@@ -28,4 +28,4 @@ make -C "$ROOT/FieldM" check-applications
 "$ROOT/kernel/build-on5-fbconsole.sh"
 
 echo "Kernel: $ROOT/kernel/arch/arm/boot/zImage"
-echo "FieldM: $ROOT/FieldM/simple-desktop and simple-wm"
+echo "FieldM: $ROOT/FieldM/simple-desktop, simple-wm, and fieldm-packages"

@@ -10,6 +10,7 @@ MIRROR=${MIRROR:-http://deb.debian.org/debian}
 QEMU_ARM=${QEMU_ARM:-/usr/bin/qemu-arm-static}
 ANDROID_BLOBS=${ANDROID_BLOBS:-"$PROJECT_DIR/on5-android-blobs/system"}
 SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY:-}
+ZIRARCH_ROOT_PASSWORD=${ZIRARCH_ROOT_PASSWORD:-}
 OUTPUT_ARCHIVE=${OUTPUT_ARCHIVE:-"$PROJECT_DIR/builds/zirarch-debian-rootfs.tar.gz"}
 SYSTEM_BYTES=${SYSTEM_BYTES:-3061841920}
 
@@ -86,8 +87,9 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-evdev
 	xinit x11-xserver-utils x11-utils dbus dbus-x11
 	libgtk-4-dev libx11-dev libxft-dev pkg-config build-essential
-	onboard onboard-data xterm kbd console-data zram-tools
-	ca-certificates nano"
+	onboard onboard-data gsettings-desktop-schemas gir1.2-atspi-2.0 \
+	xterm kbd console-data zram-tools
+	ntpsec-ntpdate fake-hwclock e2fsprogs ca-certificates nano"
 
 chroot "$ROOT_DIR" /usr/bin/env \
 	DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
@@ -141,6 +143,8 @@ install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/simple-desktop" \
 	"$ROOT_DIR/usr/bin/simple-desktop"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/simple-wm" \
 	"$ROOT_DIR/usr/bin/simple-wm"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-packages" \
+	"$ROOT_DIR/usr/bin/fieldm-packages"
 
 install -m 755 "$KERNEL_DIR/wifi" "$ROOT_DIR/usr/bin/wifi"
 install -m 755 "$KERNEL_DIR/fbconsole/screen-console.initd" \
@@ -155,11 +159,23 @@ install -m 755 "$KERNEL_DIR/boot-mode/fieldm-desktop-launch" \
 	"$ROOT_DIR/usr/bin/fieldm-desktop-launch"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-keyboard" \
 	"$ROOT_DIR/usr/bin/fieldm-keyboard"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-onboard" \
+	"$ROOT_DIR/usr/bin/fieldm-onboard"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-terminal" \
 	"$ROOT_DIR/usr/bin/fieldm-terminal"
 install -m 644 "$PROJECT_DIR/FieldM/terminal.desktop" \
 	"$ROOT_DIR/usr/share/applications/terminal.desktop"
+install -m 644 "$PROJECT_DIR/FieldM/data/packages.desktop" \
+	"$ROOT_DIR/usr/share/applications/packages.desktop"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-x11-refresh.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-x11-refresh"
+sed -i \
+	-e '/need devfs/d' \
+	-e '/need udev/d' \
+	-e 's/after usb-gadget/after usb-rndis/' \
+	-e 's/after local networking/after usb-rndis networking/' \
+	"$ROOT_DIR/etc/init.d/screen-console" \
+	"$ROOT_DIR/etc/init.d/zirarch-boot-mode" \
 	"$ROOT_DIR/etc/init.d/zirarch-x11-refresh"
 
 mkdir -p "$ROOT_DIR/lib/firmware" "$ROOT_DIR/vendor/etc/wifi"
@@ -183,7 +199,7 @@ nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
 cat > "$ROOT_DIR/etc/fstab" <<'EOF'
-LABEL=SYSTEM / ext4 rw,relatime,errors=remount-ro 0 1
+LABEL=SYSTEM / ext4 rw,relatime,errors=remount-ro 0 0
 proc /proc proc defaults 0 0
 sysfs /sys sysfs defaults 0 0
 devpts /dev/pts devpts gid=5,mode=620 0 0
@@ -217,8 +233,8 @@ EOF
 chmod 600 "$ROOT_DIR/etc/wpa_supplicant/wpa_supplicant.conf"
 
 cat > "$ROOT_DIR/etc/ssh/sshd_config.d/zirarch.conf" <<'EOF'
-PermitRootLogin prohibit-password
-PasswordAuthentication no
+PermitRootLogin yes
+PasswordAuthentication yes
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 UsePAM no
@@ -231,7 +247,8 @@ if [ -n "$SSH_PUBLIC_KEY" ]; then
 else
 	echo "warning: SSH_PUBLIC_KEY is unset; root SSH will have no login key" >&2
 fi
-chroot "$ROOT_DIR" /usr/bin/passwd -l root
+printf 'root:%s\n' "$ZIRARCH_ROOT_PASSWORD" |
+	chroot "$ROOT_DIR" /usr/sbin/chpasswd
 chroot "$ROOT_DIR" /usr/bin/ssh-keygen -A
 
 cat > "$ROOT_DIR/etc/default/zramswap" <<'EOF'
@@ -246,7 +263,7 @@ description="Compressed RAM swap"
 
 depend()
 {
-	after udev
+	after localmount
 }
 
 start()
@@ -306,7 +323,13 @@ start()
 	ip link set rndis0 up
 	ip addr show dev rndis0 | grep -q '192.168.7.2/24' ||
 		ip addr add 192.168.7.2/24 dev rndis0
-	ip route replace default via 192.168.7.1 dev rndis0
+	if ! ip route show default | grep -q ' dev wlan0 '; then
+		ip route replace default via 192.168.7.1 dev rndis0 metric 200
+	fi
+
+	ntpdate -u -s time.cloudflare.com 2>/dev/null &&
+		date -u +%s > /var/lib/zirarch/clock
+	hwclock -w 2>/dev/null || true
 }
 EOF
 chmod 755 "$ROOT_DIR/etc/init.d/usb-rndis"
@@ -322,7 +345,6 @@ pidfile="/run/zirarch-sshd.pid"
 
 depend()
 {
-	need usb-rndis
 	after usb-rndis
 }
 
@@ -332,6 +354,56 @@ start_pre()
 }
 EOF
 chmod 755 "$ROOT_DIR/etc/init.d/zirarch-sshd"
+
+mkdir -p "$ROOT_DIR/var/lib/zirarch"
+date -u +%s > "$ROOT_DIR/var/lib/zirarch/clock"
+cat > "$ROOT_DIR/etc/init.d/zirarch-clock" <<'EOF'
+#!/sbin/openrc-run
+
+description="Restore the persisted Zirarch clock without an RTC"
+
+depend()
+{
+	before '*'
+}
+
+start()
+{
+	[ -s /var/lib/zirarch/clock ] || return 0
+	read -r saved < /var/lib/zirarch/clock
+	case "$saved" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	date -u -s "@$saved" >/dev/null
+}
+
+stop()
+{
+	mkdir -p /var/lib/zirarch
+	date -u +%s > /var/lib/zirarch/clock
+}
+EOF
+chmod 755 "$ROOT_DIR/etc/init.d/zirarch-clock"
+
+cat > "$ROOT_DIR/etc/init.d/zirarch-clock-sync" <<'EOF'
+#!/sbin/openrc-run
+
+description="Synchronize the clock over RNDIS and persist it"
+
+depend()
+{
+	need usb-rndis
+	after usb-rndis networking
+}
+
+start()
+{
+	ntpdate -u -s time.cloudflare.com 2>/dev/null &&
+		date -u +%s > /var/lib/zirarch/clock
+	return 0
+}
+EOF
+chmod 755 "$ROOT_DIR/etc/init.d/zirarch-clock-sync"
 
 cat > "$ROOT_DIR/etc/init.d/wifi-link" <<'EOF'
 #!/sbin/openrc-run
@@ -368,6 +440,21 @@ depend()
 EOF
 chmod 755 "$ROOT_DIR/etc/init.d/wpa-supplicant-zirarch"
 
+mkdir -p "$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d"
+cat > "$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d/zirarch-default-route" <<'EOF'
+#!/bin/sh
+
+case "${reason:-}" in
+	BOUND|RENEW|REBIND|REBOOT)
+		[ "${interface:-}" = wlan0 ] || exit 0
+		set -- ${new_routers:-}
+		[ "$#" -ge 1 ] || exit 0
+		ip route replace default via "$1" dev wlan0 metric 100
+		;;
+esac
+EOF
+chmod 755 "$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d/zirarch-default-route"
+
 cat > "$ROOT_DIR/etc/X11/xorg.conf.d/10-on5-fbdev.conf" <<'EOF'
 Section "Device"
 	Identifier "On5 fbdev"
@@ -386,6 +473,10 @@ Section "Screen"
 EndSection
 EOF
 cat > "$ROOT_DIR/etc/X11/xorg.conf.d/20-on5-touchscreen.conf" <<'EOF'
+Section "ServerFlags"
+	Option "AutoAddDevices" "false"
+EndSection
+
 Section "InputDevice"
 	Identifier "On5 touchscreen"
 	Driver "evdev"
@@ -418,26 +509,43 @@ EOF
 for runlevel in sysinit boot default shutdown; do
 	mkdir -p "$ROOT_DIR/etc/runlevels/$runlevel"
 done
-for service in devfs dmesg procfs sysfs udev; do
+for service in dmesg procfs sysfs; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" sysinit
 done
-for service in bootmisc hostname hwclock localmount modules root sysctl; do
+chroot "$ROOT_DIR" /sbin/rc-update add zirarch-clock sysinit
+chroot "$ROOT_DIR" /sbin/rc-update del udev sysinit 2>/dev/null || true
+chroot "$ROOT_DIR" /sbin/rc-update del udev-trigger sysinit 2>/dev/null || true
+for service in bootmisc hostname hwclock fake-hwclock localmount modules root sysctl; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" boot
 done
+for runlevel in $(find "$ROOT_DIR/etc/runlevels" -mindepth 1 -maxdepth 1 \
+	-type d -printf '%f '); do
+	chroot "$ROOT_DIR" /sbin/rc-update del ssh "$runlevel" 2>/dev/null || true
+	chroot "$ROOT_DIR" /sbin/rc-update del udev "$runlevel" 2>/dev/null || true
+	chroot "$ROOT_DIR" /sbin/rc-update del udev-trigger "$runlevel" 2>/dev/null || true
+	chroot "$ROOT_DIR" /sbin/rc-update del fsck "$runlevel" 2>/dev/null || true
+done
 for service in networking dbus elogind zramswap usb-rndis \
-	zirarch-sshd wifi-link wpa-supplicant-zirarch zirarch-boot-mode; do
+	zirarch-clock-sync zirarch-sshd wifi-link \
+	wpa-supplicant-zirarch zirarch-boot-mode; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] ||
 		die "required OpenRC service is missing: $service"
 	chroot "$ROOT_DIR" /sbin/rc-update add "$service" default
 done
 
 rm -rf "$ROOT_DIR/usr/src/zirarch"
+rm -f "$ROOT_DIR/etc/runlevels/"*"/udev" \
+	"$ROOT_DIR/etc/runlevels/"*"/udev-trigger" \
+	"$ROOT_DIR/etc/runlevels/"*"/ssh"
+rm -f "$ROOT_DIR/etc/init.d/udev" "$ROOT_DIR/etc/init.d/udev-trigger"
 chroot "$ROOT_DIR" /usr/bin/apt-get clean
 find "$ROOT_DIR/var/lib/apt/lists" -mindepth 1 -delete
 find "$ROOT_DIR/var/cache/apt/archives" -mindepth 1 -delete
 rm -f "$ROOT_DIR/usr/bin/qemu-arm-static"
+find "$ROOT_DIR" -type f -newermt '2001-01-01' \
+	-exec touch -t 200001010000 {} +
 
 cleanup
 trap - EXIT HUP INT TERM

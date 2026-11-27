@@ -1,3 +1,7 @@
 #!/bin/sh
 echo $$ > /run/fieldm-desktop.pid
+rm -f /run/fieldm-keyboard/manual \
+	/run/fieldm-keyboard/entry \
+	/run/fieldm-keyboard/terminal
+/usr/bin/fieldm-keyboard warm
 exec simple-desktop --x-session

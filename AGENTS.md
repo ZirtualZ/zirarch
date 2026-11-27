@@ -63,7 +63,7 @@ The phone exposes RNDIS. Assign the host side `192.168.7.1/24`; the phone is
 ip -brief address show enp0s20f0u10
 ping 192.168.7.2
 ssh \
-  -i /tmp/zirarch_key \
+  -i ~/.ssh/zirarch_ed25519 \
   -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/tmp/zirarch-known-hosts \

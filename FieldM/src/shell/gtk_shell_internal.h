@@ -48,6 +48,7 @@ typedef struct {
     ScreenGeometry screen;
     GtkWidget *desktop_window;
     GtkWidget *wallpaper_picture;
+    GtkWidget *status_panel;
     GtkWidget *launcher;
     GtkWidget *settings;
     GtkWidget *launcher_entry;
@@ -62,6 +63,7 @@ typedef struct {
     int window_manager_failed;
     guint x_source;
     guint wm_source;
+    guint status_source;
 } ShellState;
 
 void shell_show_error(GtkWindow *parent, const char *message);

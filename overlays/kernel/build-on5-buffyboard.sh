@@ -6,7 +6,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$KERNEL_DIR/.." && pwd)
 SOURCE_TAG=${SOURCE_TAG:-3.2.0}
 SOURCE_URL=${SOURCE_URL:-https://gitlab.postmarketos.org/postmarketOS/buffybox.git}
 SSH_TARGET=${SSH_TARGET:-root@192.168.7.2}
-SSH_IDENTITY=${SSH_IDENTITY:-/tmp/zirarch_key}
+SSH_IDENTITY=${SSH_IDENTITY:-$HOME/.ssh/zirarch_ed25519}
 SSH_KNOWN_HOSTS=${SSH_KNOWN_HOSTS:-/tmp/zirarch-native-known-hosts}
 OUTPUT=${OUTPUT:-"$PROJECT_DIR/builds/zirarch-buffyboard"}
 PATCH_FILE="$KERNEL_DIR/buffyboard/legacy-uinput.patch"

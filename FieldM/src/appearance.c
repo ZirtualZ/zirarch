@@ -3,6 +3,7 @@
 #include "appearance.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,34 @@ const char *appearance_background_color(int index)
 {
     return index >= 0 && (size_t)index < background_count
         ? background_colors[index] : NULL;
+}
+
+const char *appearance_contrast_foreground(const char *background)
+{
+    static const char dark_foreground[] = "#101820";
+    static const char light_foreground[] = "#f7fbff";
+    unsigned int red;
+    unsigned int green;
+    unsigned int blue;
+    if (background == NULL ||
+        sscanf(background, "#%2x%2x%2x", &red, &green, &blue) != 3 ||
+        red > 255 || green > 255 || blue > 255) {
+        return light_foreground;
+    }
+    double channels[] = {
+        red / 255.0,
+        green / 255.0,
+        blue / 255.0
+    };
+    for (size_t i = 0; i < sizeof(channels) / sizeof(channels[0]); ++i) {
+        channels[i] = channels[i] <= 0.04045
+            ? channels[i] / 12.92
+            : pow((channels[i] + 0.055) / 1.055, 2.4);
+    }
+    double luminance = 0.2126 * channels[0] +
+                       0.7152 * channels[1] +
+                       0.0722 * channels[2];
+    return luminance > 0.179 ? dark_foreground : light_foreground;
 }
 
 int appearance_select_theme(Appearance *appearance, int index)

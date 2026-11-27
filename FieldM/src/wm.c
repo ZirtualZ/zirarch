@@ -10,7 +10,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,20 +80,19 @@ static void terminal_keyboard_command(const char *action)
 {
     pid_t child = fork();
     if (child == 0) {
-        int null = open("/dev/null", O_WRONLY);
-        if (null >= 0) {
-            dup2(null, STDOUT_FILENO);
-            dup2(null, STDERR_FILENO);
-            if (null > STDERR_FILENO) {
-                close(null);
-            }
-        }
         execl("/usr/bin/fieldm-keyboard", "fieldm-keyboard",
               "terminal", action, (char *)NULL);
         _exit(127);
     }
     if (child < 0) {
         perror("Could not run fieldm-keyboard");
+    }
+}
+
+static void raise_keyboard_window(void)
+{
+    if (keyboard_window != None) {
+        XRaiseWindow(display, keyboard_window);
     }
 }
 
@@ -148,21 +146,24 @@ static int client_is_terminal(Window window)
 
 static int text_matches_keyboard(const char *text)
 {
-    static const char needle[] = "svkbd";
+    static const char *const names[] = {"svkbd", "onboard"};
     if (text == NULL) {
         return 0;
     }
-    for (const char *cursor = text; *cursor != '\0'; ++cursor) {
-        const char *left = cursor;
-        const char *right = needle;
-        while (*left != '\0' && *right != '\0' &&
-               tolower((unsigned char)*left) ==
-                   tolower((unsigned char)*right)) {
-            ++left;
-            ++right;
-        }
-        if (*right == '\0') {
-            return 1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const char *needle = names[i];
+        for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+            const char *left = cursor;
+            const char *right = needle;
+            while (*left != '\0' && *right != '\0' &&
+                   tolower((unsigned char)*left) ==
+                       tolower((unsigned char)*right)) {
+                ++left;
+                ++right;
+            }
+            if (*right == '\0') {
+                return 1;
+            }
         }
     }
     return 0;
@@ -197,7 +198,7 @@ static void place_keyboard_window(Window window)
                       (unsigned int)screen_layout.width, KEYBOARD_HEIGHT);
     XSetWindowBorderWidth(display, window, 0);
     XSelectInput(display, window, StructureNotifyMask | PropertyChangeMask);
-    XMapRaised(display, window);
+    XRaiseWindow(display, window);
     if (taskbar_enabled && taskbar_window != None) {
         XMapRaised(display, taskbar_window);
     }
@@ -218,7 +219,7 @@ static void sync_terminal_state(int index)
         if (terminal_count++ == 0) {
             terminal_keyboard_command("on");
         }
-    } else if (--terminal_count == 0) {
+    } else if (terminal_count > 0 && --terminal_count == 0) {
         terminal_keyboard_command("off");
     }
     if (focused == index) {
@@ -422,6 +423,12 @@ static void draw_frame(int index)
 
     draw_round_rect(managed->frame, managed->width - 58, 6, 52, 52, 18,
                     index == focused ? close_color : button_color);
+    if (managed->terminal) {
+        draw_round_rect(managed->frame, managed->width - 122, 6, 52, 52, 18,
+                        index == focused ? accent_xft.pixel : button_color);
+        draw_text(managed->frame, "< >", managed->width - 112, 41,
+                  &text_xft, 32);
+    }
     XSetForeground(display, gc, text_xft.pixel);
     XDrawLine(display, managed->frame, gc, managed->width - 43, 20,
               managed->width - 25, 42);
@@ -476,6 +483,7 @@ static void focus_client(int index)
     } else if (clients[index].fullscreen && taskbar_window != None) {
         XUnmapWindow(display, taskbar_window);
     }
+    raise_keyboard_window();
 }
 
 static void maximize_client(int index, int fullscreen)
@@ -509,6 +517,7 @@ static void maximize_client(int index, int fullscreen)
             XUnmapWindow(display, taskbar_window);
         }
     }
+    raise_keyboard_window();
 }
 
 static void arrange_client(int index)
@@ -536,6 +545,7 @@ static void manage_window(Window client)
         return;
     }
     if (client_is_keyboard(client)) {
+        XMapWindow(display, client);
         place_keyboard_window(client);
         return;
     }
@@ -603,8 +613,7 @@ static void forget_client(int index)
     }
     Window frame = clients[index].frame;
     int was_focused = focused == index;
-    int was_terminal = clients[index].terminal;
-    if (was_terminal && --terminal_count == 0) {
+    if (clients[index].terminal && --terminal_count == 0) {
         terminal_keyboard_command("off");
     }
     XDestroyWindow(display, frame);
@@ -982,14 +991,14 @@ int main(int argc, char **argv)
     Cursor pointer_cursor = XCreateFontCursor(display, XC_left_ptr);
     XDefineCursor(display, root, pointer_cursor);
     XFreeCursor(display, pointer_cursor);
-    frame_color = named_color("#12161c");
-    active_color = named_color("#252c34");
+    frame_color = named_color("#0f1318");
+    active_color = named_color("#202731");
     switcher_color = named_color("#171c23");
-    panel_color = named_color("#1b2028");
-    button_color = named_color("#242b34");
+    panel_color = named_color("#171c23");
+    button_color = named_color("#222933");
     button_active_color = named_color("#303d3a");
-    outline_color = named_color("#343d47");
-    close_color = named_color("#a94b55");
+    outline_color = named_color("#303945");
+    close_color = named_color("#73343d");
     gc = XCreateGC(display, root, 0, NULL);
     ui_font = XftFontOpenName(display, screen, "sans:size=14");
     if (ui_font == NULL) {
@@ -1086,12 +1095,7 @@ int main(int argc, char **argv)
                     managed->height = event.xconfigurerequest.height < MIN_HEIGHT
                         ? MIN_HEIGHT : event.xconfigurerequest.height;
                 }
-                if (managed->terminal && focused == index &&
-                    !managed->fullscreen) {
-                    maximize_client(index, 0);
-                } else {
-                    arrange_client(index);
-                }
+                arrange_client(index);
             }
         } else if (event.type == ClientMessage) {
             Atom state_atom = XInternAtom(display, "_NET_WM_STATE", False);
@@ -1251,8 +1255,27 @@ int main(int argc, char **argv)
             int close_click = title_click &&
                 event.xbutton.x >= clients[index].width - 64 &&
                 event.xbutton.x < clients[index].width;
+            int resize_click = title_click && clients[index].terminal &&
+                event.xbutton.x >= clients[index].width - 128 &&
+                event.xbutton.x < clients[index].width - 64;
             if (close_click && event.xbutton.button == Button1) {
                 close_focused();
+                continue;
+            }
+            if (resize_click && event.xbutton.button == Button1) {
+                int next_width = 708;
+                if (clients[index].width >= 650) {
+                    next_width = 560;
+                } else if (clients[index].width >= 500) {
+                    next_width = 420;
+                } else if (clients[index].width >= 380) {
+                    next_width = 320;
+                }
+                clients[index].width = next_width - RESIZE_BORDER;
+                clients[index].x = screen_layout.x +
+                    (screen_layout.width - clients[index].width -
+                     RESIZE_BORDER) / 2;
+                arrange_client(index);
                 continue;
             }
             int alt_drag = (event.xbutton.state & Mod1Mask) != 0 &&

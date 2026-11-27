@@ -1,6 +1,6 @@
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -Wpedantic
-LDLIBS += -lX11
+LDLIBS += -lX11 -lm
 PKG_CONFIG ?= pkg-config
 GTK_CFLAGS = $(shell $(PKG_CONFIG) --cflags 'gtk4 >= 4.12' 2>/dev/null)
 GTK_LIBS = $(shell $(PKG_CONFIG) --libs 'gtk4 >= 4.12' 2>/dev/null)
@@ -13,17 +13,18 @@ DESTDIR ?=
 
 .PHONY: all clean install check-gtk check-applications
 
-all: simple-desktop simple-wm
+all: simple-desktop simple-wm fieldm-packages
 
 DESKTOP_SOURCES = src/desktop.c src/applications.c \
 	src/appearance.c src/screen_layout.c src/shell/session.c \
 	src/shell/gtk_shell.c src/shell/desktop_view.c src/shell/launcher.c \
-	src/shell/settings.c src/shell/icon_themes.c src/shell/icon_badge.c
+	src/shell/settings.c src/shell/wifi.c src/shell/icon_themes.c \
+	src/shell/icon_badge.c
 DESKTOP_HEADERS = src/applications.h src/appearance.h \
 	src/screen_layout.h src/shell/session.h src/shell/gtk_shell.h \
 	src/shell/gtk_shell_internal.h src/shell/desktop_view.h \
 	src/shell/launcher.h src/shell/settings.h src/shell/icon_themes.h \
-	src/shell/icon_badge.h
+	src/shell/icon_badge.h src/shell/wifi.h
 
 check-gtk:
 	@command -v "$(PKG_CONFIG)" >/dev/null 2>&1 || { \
@@ -47,11 +48,18 @@ simple-wm: src/wm.c src/screen_layout.c src/screen_layout.h
 	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ \
 		src/wm.c src/screen_layout.c $(LDLIBS) $(XFT_LIBS)
 
+fieldm-packages: src/packages.c
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ src/packages.c \
+		$(LDLIBS) $(GTK_LIBS)
+
 install: all
 	install -Dm755 simple-desktop "$(DESTDIR)$(BINDIR)/simple-desktop"
 	install -Dm755 simple-wm "$(DESTDIR)$(BINDIR)/simple-wm"
+	install -Dm755 fieldm-packages "$(DESTDIR)$(BINDIR)/fieldm-packages"
 	install -Dm644 data/field-desktop.desktop \
 		"$(DESTDIR)$(XSESSIONDIR)/field-desktop.desktop"
+	install -Dm644 data/packages.desktop \
+		"$(DESTDIR)/usr/share/applications/packages.desktop"
 
 clean:
-	rm -f simple-desktop simple-wm
+	rm -f simple-desktop simple-wm fieldm-packages

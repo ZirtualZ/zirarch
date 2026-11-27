@@ -106,7 +106,7 @@ connect_wifi()
 	trap 'cleanup_failed_network' EXIT INT TERM
 	network_id=$(wpa_cli -i "$interface" add_network 2>/dev/null)
 	case "$network_id" in
-		''|*[^0-9]*) fail "could not create Wi-Fi network" ;;
+		''|*[!0-9]*) fail "could not create Wi-Fi network" ;;
 	esac
 
 	check_ok "$(wpa_cli -i "$interface" set_network "$network_id" \

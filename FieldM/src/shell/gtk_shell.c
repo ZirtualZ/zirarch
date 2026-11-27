@@ -36,13 +36,66 @@ void shell_update_styles(ShellState *state)
     if (background == NULL) {
         background = theme->background;
     }
+    const char *window_foreground =
+        appearance_contrast_foreground(background);
+    const char *panel_foreground =
+        appearance_contrast_foreground(theme->panel);
+    const char *accent_foreground =
+        appearance_contrast_foreground(theme->accent);
     char css[4096];
     int length = snprintf(
         css, sizeof(css),
-        "window { color: %s; background-color: %s; }"
+        "window { background-color: %s; color: %s; }"
         ".desktop-surface { background-color: transparent; }"
-        ".panel { background-color: %s; border-bottom: 1px solid "
+        ".desktop-heading { color: %s; font-size: 24px; "
+        "font-weight: 800; letter-spacing: 0.02em; }"
+        ".desktop-subheading { color: %s; font-size: 14px; "
+        "font-weight: 600; }"
+        "window.fieldm-menu { background-color: #11151b; color: #f4f6f8; }"
+        "window.fieldm-menu label, window.fieldm-menu text, "
+        "window.fieldm-menu button, window.fieldm-menu checkbutton, "
+        "window.fieldm-menu radiobutton, window.fieldm-menu dropdown, "
+        "window.fieldm-menu entry, window.fieldm-menu textview, "
+        "window.fieldm-menu notebook, window.fieldm-menu notebook label, "
+        "window.fieldm-menu notebook tab { color: #f4f6f8; }"
+        "window.fieldm-menu button, window.fieldm-menu entry, "
+        "window.fieldm-menu dropdown, window.fieldm-menu list, "
+        "window.fieldm-menu row, window.fieldm-menu notebook, "
+        "window.fieldm-menu scrolledwindow, window.fieldm-menu viewport { "
+        "background-color: #171c24; }"
+        "window.fieldm-menu button:hover, window.fieldm-menu row:selected { "
+        "background-color: #26313d; color: #f4f6f8; }"
+        "window.fieldm-menu row:selected label { color: #f4f6f8; }"
+        "window.fieldm-menu .launcher-card { background-color: #171c24; "
+        "border-color: #303a46; }"
+        "window.fieldm-menu .launcher-card label { color: #f4f6f8; }"
+        "window.fieldm-menu entry { color: #f4f6f8; "
+        "border: 1px solid #303a46; background-color: #171c24; }"
+        "window.fieldm-menu .title-2 { color: #f4f6f8; "
+        "font-size: 24px; font-weight: 800; }"
+        "window.fieldm-menu notebook header { background-color: #11151b; "
+        "border: 0; }"
+        "window.fieldm-menu notebook tab { min-height: 52px; "
+        "padding: 8px 12px; border-radius: 10px; "
+        "background-color: #171c24; color: #f4f6f8; "
+        "margin: 3px; }"
+        "window.fieldm-menu notebook tab:checked { "
+        "background-color: #26313d; border: 1px solid #3a4654; }"
+        "window.fieldm-menu button, window.fieldm-menu row { "
+        "transition: background-color 120ms ease, border-color 120ms ease; }"
+        ".statusbar { min-height: 64px; padding: 4px 10px; "
+        "background-color: #11151b; border-bottom: 1px solid #252b33; }"
+        ".status-brand { color: #f4f6f8; font-size: 17px; font-weight: 800; }"
+        ".status-network { color: #9aa4b0; font-size: 11px; }"
+        ".status-clock { color: #f4f6f8; font-size: 18px; font-weight: 700; }"
+        ".statusbar button { min-width: 56px; min-height: 48px; "
+        "padding: 6px 10px; border-radius: 12px; "
+        "background-color: #1d242d; color: #f4f6f8; }"
+        ".statusbar .icon-action { min-width: 48px; }"
+        ".panel { color: %s; background-color: %s; border-bottom: 1px solid "
         "alpha(%s, 0.12); padding: 6px; }"
+        ".panel button, .panel button label { color: #f4f6f8; }"
+        ".panel button { background-color: #1d242d; }"
         ".brand { font-weight: 700; letter-spacing: 0.04em; }"
         ".muted { color: alpha(%s, 0.72); }"
         "button, entry, dropdown { min-height: 56px; border-radius: 12px; "
@@ -51,30 +104,39 @@ void shell_update_styles(ShellState *state)
         "list > row { min-height: 72px; }"
         ".launcher-row { background: transparent; border-radius: 14px; "
         "padding: 4px 0; }"
-        ".launcher-card { min-height: 72px; border-radius: 14px; "
+        ".launcher-card { color: %s; min-height: 72px; "
+        "border-radius: 14px; "
         "border: 1px solid alpha(%s, 0.28); background-color: %s; "
         "padding: 8px 12px; }"
+        ".launcher-card label { color: %s; }"
         ".launcher-row:selected .launcher-card { background-color: %s; "
-        "border-color: %s; }"
+        "border-color: %s; color: %s; }"
+        ".launcher-row:selected .launcher-card label { color: %s; }"
+        ".panel .muted, .launcher-card .muted { color: alpha(%s, 0.72); }"
         "checkbutton { min-height: 52px; }"
-        ".desktop-shortcut { background-color: alpha(%s, 0.68); "
+        ".desktop-shortcut { color: %s; background-color: %s; "
         "border: 1px solid alpha(%s, 0.34); padding: 16px 10px; "
-        "min-width: 108px; min-height: 112px; }"
-        ".desktop-shortcut:hover { background-color: alpha(%s, 0.9); "
+        "min-width: 108px; min-height: 112px; border-radius: 18px; "
+        "box-shadow: 0 4px 10px alpha(#000000, 0.18); }"
+        ".desktop-shortcut:hover { background-color: %s; "
         "border-color: %s; }"
         ".desktop-shortcut label { color: %s; font-weight: 600; }"
         ".app-icon-badge { border-radius: 14px; background-color: %s; "
         "border: 1px solid alpha(%s, 0.4); }"
         ".app-icon-letter { color: %s; font-size: 25px; font-weight: 800; }"
         ".app-icon-image { background-color: %s; border-radius: 12px; }"
-        ".primary-action { background-color: %s; color: %s; font-weight: 600; }"
+        ".primary-action, .primary-action label { color: %s; font-weight: 600; }"
+        ".primary-action { background-color: %s; }"
         "entry, list, notebook { border-radius: 10px; }",
-        theme->foreground, background, theme->panel, theme->foreground,
-        theme->foreground, theme->foreground, theme->panel,
-        theme->accent, theme->accent, theme->panel, theme->foreground,
-        theme->panel, theme->accent, theme->foreground, theme->panel,
-        theme->foreground, background, theme->panel,
-        theme->accent, theme->background);
+        background, window_foreground, window_foreground, window_foreground,
+        panel_foreground, theme->panel,
+        panel_foreground, window_foreground,
+        panel_foreground, theme->panel, theme->panel, panel_foreground,
+        theme->accent, theme->accent, accent_foreground, accent_foreground,
+        panel_foreground, panel_foreground, theme->panel, panel_foreground,
+        theme->panel, theme->accent, panel_foreground, theme->panel,
+        panel_foreground, panel_foreground, theme->panel,
+        accent_foreground, theme->accent);
     if (length < 0 || (size_t)length >= sizeof(css)) {
         fprintf(stderr, "Could not build desktop theme stylesheet.\n");
         return;
@@ -305,6 +367,7 @@ static void application_activate(GtkApplication *application, gpointer data)
 {
     ShellState *state = data;
     state->application = application;
+    g_application_hold(G_APPLICATION(application));
     state->styles = gtk_css_provider_new();
     shell_update_styles(state);
     icon_themes_initialize(state);
@@ -355,6 +418,9 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
     }
     if (state->wm_source != 0) {
         g_source_remove(state->wm_source);
+    }
+    if (state->status_source != 0) {
+        g_source_remove(state->status_source);
     }
     launcher_close(state);
     if (state->settings != NULL) {

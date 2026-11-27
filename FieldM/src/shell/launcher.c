@@ -166,6 +166,7 @@ void launcher_open(ShellState *state)
     }
     GtkWidget *window = gtk_application_window_new(state->application);
     state->launcher = window;
+    gtk_widget_add_css_class(window, "fieldm-menu");
     gtk_window_set_title(GTK_WINDOW(window), "Applications");
     gtk_window_set_default_size(GTK_WINDOW(window), 688, 1080);
     GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -173,7 +174,7 @@ void launcher_open(ShellState *state)
     gtk_widget_set_margin_end(content, 22);
     gtk_widget_set_margin_top(content, 20);
     gtk_widget_set_margin_bottom(content, 20);
-    GtkWidget *heading = gtk_label_new("Find an application");
+    GtkWidget *heading = gtk_label_new("Applications");
     gtk_widget_add_css_class(heading, "title-2");
     gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
     state->launcher_entry = gtk_search_entry_new();

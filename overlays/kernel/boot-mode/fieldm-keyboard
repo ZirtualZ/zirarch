@@ -3,38 +3,135 @@ set -u
 
 state_dir=/run/fieldm-keyboard
 pidfile="$state_dir/pid"
+logfile=/var/log/fieldm-keyboard.log
 mkdir -p "$state_dir"
+touch "$logfile"
+exec >>"$logfile" 2>&1
 DISPLAY=${DISPLAY:-:0}
 export DISPLAY
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+	desktop_pid=$(pgrep -o -x simple-desktop 2>/dev/null || true)
+	if [ -n "$desktop_pid" ] &&
+	   [ -r "/proc/$desktop_pid/environ" ]; then
+		DBUS_SESSION_BUS_ADDRESS=$(
+			tr '\0' '\n' < "/proc/$desktop_pid/environ" |
+				sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p'
+		)
+		export DBUS_SESSION_BUS_ADDRESS
+	fi
+fi
+
+keyboard_pid()
+{
+	[ -s "$pidfile" ] || return 1
+	read -r pid < "$pidfile"
+	case "$pid" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	[ -r "/proc/$pid/cmdline" ] || return 1
+	tr '\0' ' ' < "/proc/$pid/cmdline" |
+		grep -Eq '(^|[ /])(svkbd|fieldm-onboard|onboard)([[:space:]]|$)'
+}
+
+keyboard_visible()
+{
+	[ -e "$state_dir/manual" ] ||
+		[ -e "$state_dir/entry" ] ||
+		[ -e "$state_dir/terminal" ]
+}
+
+keyboard_dbus()
+{
+	owner=$(dbus-send --session --print-reply=literal \
+		--dest=org.freedesktop.DBus \
+		/org/freedesktop/DBus \
+		org.freedesktop.DBus.NameHasOwner \
+		string:org.onboard.Onboard 2>/dev/null) || return 1
+	case "$owner" in
+		*true*) ;;
+		*) return 1 ;;
+	esac
+	dbus-send --session --print-reply \
+		--dest=org.onboard.Onboard \
+		/org/onboard/Onboard/Keyboard \
+		"org.onboard.Onboard.Keyboard.$1" \
+		>/dev/null 2>&1
+}
+
+start_keyboard()
+{
+	rm -f "$pidfile"
+	if command -v svkbd-mobile-intl >/dev/null 2>&1; then
+		svkbd-mobile-intl -d -g 720x300+0-0 &
+	elif command -v fieldm-onboard >/dev/null 2>&1; then
+		fieldm-onboard --layout Phone --size 720x300 -x 0 -y 980 &
+	elif command -v onboard >/dev/null 2>&1; then
+		onboard --layout Phone --size 720x300 -x 0 -y 980 &
+	else
+		echo "fieldm-keyboard: no on-screen keyboard is installed" >&2
+		return 1
+	fi
+	echo $! > "$pidfile"
+	printf '%s: started keyboard pid %s for DISPLAY=%s\n' \
+		"$(date '+%Y-%m-%d %H:%M:%S')" "$!" "$DISPLAY"
+}
+
+hide_when_released()
+{
+	sequence=$1
+	(
+		for delay in 0.4 0.2 0.4 0.8; do
+			sleep "$delay"
+			[ "$(cat "$state_dir/hide-sequence" 2>/dev/null)" = "$sequence" ] ||
+				exit 0
+			keyboard_visible && exit 0
+			keyboard_dbus Hide && exit 0
+		done
+	) &
+}
 
 reconcile()
 {
-	visible=0
-	[ -e "$state_dir/manual" ] && visible=1
-	[ -e "$state_dir/entry" ] && visible=1
-	[ -e "$state_dir/terminal" ] && visible=1
-
-	if [ "$visible" -eq 1 ]; then
-		pid=
-		[ -s "$pidfile" ] && read -r pid < "$pidfile"
-		if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-			if command -v svkbd-mobile-intl >/dev/null 2>&1; then
-				svkbd-mobile-intl -d -g 720x300+0-0 &
-			elif command -v onboard >/dev/null 2>&1; then
-				onboard --layout Phone --size 720x300 --x 0 --y 980 &
-			else
-				echo "fieldm-keyboard: no on-screen keyboard is installed" >&2
-				exit 1
-			fi
-			echo $! > "$pidfile"
+	sequence=$(date +%s%N 2>/dev/null || date +%s)
+	echo "$sequence" > "$state_dir/hide-sequence"
+	if keyboard_visible; then
+		keyboard_pid || start_keyboard || return 1
+		if ! keyboard_dbus Show; then
+			(
+				for delay in 0.1 0.2 0.4 0.8; do
+					sleep "$delay"
+					keyboard_visible || exit 0
+					keyboard_dbus Show && exit 0
+				done
+			) &
 		fi
 	else
-		pid=
-		[ -s "$pidfile" ] && read -r pid < "$pidfile"
-		[ -z "$pid" ] || kill "$pid" 2>/dev/null || true
-		rm -f "$pidfile"
+		keyboard_pid || rm -f "$pidfile"
+		hide_when_released "$sequence"
 	fi
 }
+
+warm()
+{
+	keyboard_pid && return 0
+	start_keyboard || return 0
+	(
+		for delay in 0.1 0.2 0.3 0.5 0.8 1.0 2.0; do
+			sleep "$delay"
+			keyboard_visible && exit 0
+			keyboard_dbus Hide || :
+		done
+	) &
+}
+
+if [ "${1:-}" = warm ]; then
+	warm
+	printf '%s: warmed keyboard pid %s for DISPLAY=%s\n' \
+		"$(date '+%Y-%m-%d %H:%M:%S')" \
+		"$(cat "$pidfile" 2>/dev/null || echo none)" "$DISPLAY"
+	exit 0
+fi
 
 lease=${1:-manual}
 action=${2:-toggle}
@@ -48,13 +145,13 @@ case "$action" in
 	on) touch "$state_dir/$lease" ;;
 	off) rm -f "$state_dir/$lease" ;;
 	toggle)
-		if [ -e "$state_dir/$lease" ]; then
-			rm -f "$state_dir/$lease"
-		else
+		[ -e "$state_dir/$lease" ] &&
+			rm -f "$state_dir/$lease" ||
 			touch "$state_dir/$lease"
-		fi
 		;;
 	*) exit 1 ;;
 esac
 
+printf '%s: lease=%s action=%s\n' \
+	"$(date '+%Y-%m-%d %H:%M:%S')" "$lease" "$action"
 reconcile

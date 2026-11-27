@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Packages
+Comment=Search and manage system packages
+Exec=/usr/bin/fieldm-packages
+TryExec=/usr/bin/fieldm-packages
+Icon=system-software-install-symbolic
+Terminal=false
+Categories=Settings;PackageManager;

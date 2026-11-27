@@ -68,11 +68,8 @@ static gboolean desktop_key_pressed(GtkEventControllerKey *controller,
     if (state->launcher != NULL) {
         launcher_close(state);
     } else if (state->settings != NULL) {
-        GtkWidget *settings = state->settings;
-        state->settings = NULL;
-        state->wallpaper_toggle = NULL;
-        state->icon_theme_dropdown = NULL;
-        gtk_window_destroy(GTK_WINDOW(settings));
+        shell_keyboard_command("entry", "off");
+        gtk_widget_set_visible(state->settings, FALSE);
     } else {
         /* A phone Back gesture must not terminate the desktop session. */
         return GDK_EVENT_STOP;
@@ -115,33 +112,111 @@ static void add_grid_button(GtkGrid *grid, GtkWidget *button,
 
 static GtkWidget *make_panel(ShellState *state)
 {
-    GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *panel = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_add_css_class(panel, "panel");
-    gtk_box_set_homogeneous(GTK_BOX(panel), TRUE);
-    GtkWidget *apps = gtk_button_new_with_label("Applications");
+    gtk_widget_add_css_class(panel, "statusbar");
+    gtk_widget_set_size_request(panel, -1, 64);
+
+    GtkWidget *brand = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *brand_name = gtk_label_new("Zirarch");
+    gtk_widget_add_css_class(brand_name, "status-brand");
+    gtk_label_set_xalign(GTK_LABEL(brand_name), 0.0f);
+    GtkWidget *network = gtk_label_new("Offline");
+    gtk_widget_add_css_class(network, "status-network");
+    gtk_label_set_xalign(GTK_LABEL(network), 0.0f);
+    gtk_box_append(GTK_BOX(brand), brand_name);
+    gtk_box_append(GTK_BOX(brand), network);
+    g_object_set_data(G_OBJECT(panel), "status-network", network);
+
+    GtkWidget *clock = gtk_label_new("00:00");
+    gtk_widget_add_css_class(clock, "status-clock");
+    gtk_label_set_xalign(GTK_LABEL(clock), 0.5f);
+    g_object_set_data(G_OBJECT(panel), "status-clock", clock);
+
+    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *apps = gtk_button_new();
+    GtkWidget *apps_content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *apps_icon = gtk_image_new_from_icon_name("view-grid-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(apps_icon), 20);
+    GtkWidget *apps_label = gtk_label_new("Apps");
+    gtk_box_append(GTK_BOX(apps_content), apps_icon);
+    gtk_box_append(GTK_BOX(apps_content), apps_label);
+    gtk_button_set_child(GTK_BUTTON(apps), apps_content);
     gtk_widget_add_css_class(apps, "panel-action");
     gtk_widget_add_css_class(apps, "primary-action");
-    gtk_widget_set_hexpand(apps, TRUE);
     g_object_set_data(G_OBJECT(apps), "action",
                       GINT_TO_POINTER(SHELL_ACTION_APPS));
     g_signal_connect(apps, "clicked", G_CALLBACK(shortcut_clicked), state);
-    GtkWidget *keyboard = gtk_button_new_with_label("Keyboard");
-    gtk_widget_add_css_class(keyboard, "panel-action");
-    gtk_widget_set_hexpand(keyboard, TRUE);
-    g_object_set_data(G_OBJECT(keyboard), "action",
-                      GINT_TO_POINTER(SHELL_ACTION_KEYBOARD));
-    g_signal_connect(keyboard, "clicked", G_CALLBACK(shortcut_clicked), state);
+    GtkWidget *settings = gtk_button_new();
+    GtkWidget *settings_icon = gtk_image_new_from_icon_name(
+        "preferences-system-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(settings_icon), 20);
+    gtk_button_set_icon_name(GTK_BUTTON(settings),
+                             "preferences-system-symbolic");
+    gtk_widget_add_css_class(settings, "panel-action");
+    gtk_widget_add_css_class(settings, "icon-action");
+    g_object_set_data(G_OBJECT(settings), "action",
+                      GINT_TO_POINTER(SHELL_ACTION_SETTINGS));
+    g_signal_connect(settings, "clicked", G_CALLBACK(shortcut_clicked), state);
+
+    gtk_box_append(GTK_BOX(actions), apps);
+    gtk_box_append(GTK_BOX(actions), settings);
+
+    gtk_widget_set_hexpand(brand, TRUE);
+    gtk_widget_set_hexpand(clock, TRUE);
+    gtk_widget_set_halign(actions, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(panel), brand);
+    gtk_box_append(GTK_BOX(panel), clock);
+    gtk_box_append(GTK_BOX(panel), actions);
+    g_object_set_data(G_OBJECT(panel), "fieldm-status-panel", panel);
+    return panel;
+}
+
+static gboolean status_refresh(gpointer data)
+{
+    ShellState *state = data;
+    if (state == NULL || state->desktop_window == NULL) {
+        return G_SOURCE_CONTINUE;
+    }
+    GDateTime *now = g_date_time_new_now_local();
+    char *time_text = g_date_time_format(now, "%H:%M");
+    g_date_time_unref(now);
+    if (state->status_panel != NULL) {
+        GtkWidget *clock = g_object_get_data(
+            G_OBJECT(state->status_panel), "status-clock");
+        GtkWidget *network = g_object_get_data(
+            G_OBJECT(state->status_panel), "status-network");
+        if (clock != NULL) {
+            gtk_label_set_text(GTK_LABEL(clock),
+                               time_text != NULL ? time_text : "--:--");
+        }
+        if (network != NULL) {
+            char *operstate = NULL;
+            g_file_get_contents("/sys/class/net/wlan0/operstate",
+                                &operstate, NULL, NULL);
+            gtk_label_set_text(
+                GTK_LABEL(network),
+                operstate != NULL && g_str_has_prefix(operstate, "up")
+                    ? "Wi-Fi connected" : "Wi-Fi off");
+            g_free(operstate);
+        }
+    }
+    g_free(time_text);
+    return G_SOURCE_CONTINUE;
+}
+
+/*
+static GtkWidget *make_legacy_settings_button(ShellState *state)
+{
     GtkWidget *settings = gtk_button_new_with_label("Settings");
     gtk_widget_add_css_class(settings, "panel-action");
     gtk_widget_set_hexpand(settings, TRUE);
     g_object_set_data(G_OBJECT(settings), "action",
                       GINT_TO_POINTER(SHELL_ACTION_SETTINGS));
     g_signal_connect(settings, "clicked", G_CALLBACK(shortcut_clicked), state);
-    gtk_box_append(GTK_BOX(panel), apps);
-    gtk_box_append(GTK_BOX(panel), keyboard);
-    gtk_box_append(GTK_BOX(panel), settings);
-    return panel;
+    return settings;
 }
+*/
 
 static int set_desktop_window_type(ShellState *state, GtkWidget *window)
 {
@@ -204,7 +279,15 @@ static GtkWidget *make_desktop_window(ShellState *state)
     gtk_widget_add_controller(window, keys);
 
     if (state->top_panel) {
-        gtk_box_append(GTK_BOX(surface), make_panel(state));
+        state->status_panel = make_panel(state);
+        gtk_box_append(GTK_BOX(surface), state->status_panel);
+        status_refresh(state);
+        if (state->status_source == 0) {
+            state->status_source =
+                g_timeout_add_seconds(30, status_refresh, state);
+        }
+    } else {
+        state->status_panel = NULL;
     }
 
     GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 18);
@@ -256,6 +339,11 @@ void shell_refresh_desktop_windows(ShellState *state)
         gtk_window_set_transient_for(GTK_WINDOW(state->launcher), NULL);
     }
     state->wallpaper_picture = NULL;
+    if (state->status_source != 0) {
+        g_source_remove(state->status_source);
+        state->status_source = 0;
+    }
+    state->status_panel = NULL;
     if (state->desktop_window != NULL) {
         gtk_window_destroy(GTK_WINDOW(state->desktop_window));
         state->desktop_window = NULL;
