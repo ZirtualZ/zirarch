@@ -26,73 +26,99 @@ void shell_show_error(GtkWindow *parent, const char *message)
 void shell_update_styles(ShellState *state)
 {
     static const char css[] =
-        "window { background-color: #11151C; color: #E6EDF3; }"
-        ".desktop-surface { background-color: #11151C; }"
-        ".home-watermark { color: #E6EDF3; font-size: 11px; "
-        "font-weight: 800; letter-spacing: 0.18em; "
-        "border: 1px solid #21262D; border-radius: 16px; padding: 4px 12px; }"
-        "window.fieldm-menu { background-color: #11151C; color: #E6EDF3; }"
-        "window.fieldm-menu label, window.fieldm-menu text, "
-        "window.fieldm-menu button, window.fieldm-menu checkbutton, "
-        "window.fieldm-menu radiobutton, window.fieldm-menu dropdown, "
-        "window.fieldm-menu entry, window.fieldm-menu textview, "
-        "window.fieldm-menu notebook, window.fieldm-menu notebook label, "
-        "window.fieldm-menu notebook tab { color: #E6EDF3; }"
-        "window.fieldm-menu button, window.fieldm-menu entry, "
-        "window.fieldm-menu dropdown, window.fieldm-menu list, "
-        "window.fieldm-menu row, window.fieldm-menu notebook, "
-        "window.fieldm-menu scrolledwindow, window.fieldm-menu viewport { "
-        "background-color: #11151C; }"
-        "window.fieldm-menu button:hover, window.fieldm-menu row:selected { "
-        "background-color: #1A2028; color: #E6EDF3; border-color: #00E5A8; }"
-        "window.fieldm-menu row:selected label { color: #E6EDF3; }"
-        "window.fieldm-menu .launcher-card { background-color: #11151C; "
-        "border: 1px solid #21262D; }"
-        "window.fieldm-menu .launcher-card label { color: #E6EDF3; }"
-        "window.fieldm-menu entry { color: #E6EDF3; "
-        "border: 1px solid #21262D; background-color: #11151C; }"
-        "window.fieldm-menu .title-2 { color: #E6EDF3; "
+        "* { all: unset; }"
+        "window, dialog, popover, headerbar, notebook, scrolledwindow, "
+        "viewport, list, listview, row, text, textview, grid, box, overlay, "
+        "popover contents, .fieldm-menu, .desktop-surface { "
+        "background-color: #F4F1EA; background-image: none; "
+        "color: #111111; box-shadow: none; border: none; "
+        "font-family: 'DejaVu Serif'; }"
+        "window { background-color: #F4F1EA; color: #111111; }"
+        "label, text, entry, button, checkbutton, radiobutton, dropdown, "
+        "notebook tab, row, listview, textview { "
+        "background-color: #F4F1EA; background-image: none; "
+        "color: #111111; box-shadow: none; border: none; "
+        "font-family: 'DejaVu Serif'; }"
+        "button { min-height: 48px; min-width: 48px; "
+        "border: 2px solid #111111; border-radius: 4px; "
+        "padding: 8px 12px; background-image: none; "
+        "background-color: #F4F1EA; color: #111111; box-shadow: none; }"
+        "button:active, button:checked, button:focus, "
+        "row:selected, row:active, notebook tab:checked, "
+        "notebook tab:active { background-image: none; "
+        "background-color: #111111; color: #F4F1EA; "
+        "border: 2px solid #111111; box-shadow: none; }"
+        "button:active label, button:checked label, button:focus label, "
+        "row:selected label, row:active label, "
+        "notebook tab:checked label, notebook tab:active label { "
+        "background-color: #111111; color: #F4F1EA; }"
+        "entry, textview text { border: 2px solid #111111; "
+        "background-color: #F4F1EA; background-image: none; "
+        "color: #111111; box-shadow: none; border-radius: 4px; "
+        "caret-color: #111111; }"
+        "entry:focus, textview:focus { border: 2px solid #111111; "
+        "background-color: #111111; color: #F4F1EA; }"
+        "entry:focus text, textview:focus text { color: #F4F1EA; }"
+        "checkbutton check, radiobutton radio { "
+        "background: #F4F1EA; border: 2px solid #111111; "
+        "box-shadow: none; }"
+        "checkbutton:checked check, radiobutton:checked radio { "
+        "background: #111111; color: #F4F1EA; }"
+        ".desktop-shortcut { min-width: 130px; min-height: 130px; "
+        "padding: 0; border: 2px solid #111111; border-radius: 4px; "
+        "background: #F4F1EA; color: #111111; box-shadow: none; }"
+        ".desktop-shortcut label { font-size: 18px; font-weight: 700; "
+        "color: #111111; background: transparent; }"
+        ".desktop-shortcut:active, .desktop-shortcut:checked, "
+        ".desktop-shortcut:focus { background: #111111; "
+        "border: 2px solid #111111; color: #F4F1EA; box-shadow: none; }"
+        ".desktop-shortcut:active label, .desktop-shortcut:checked label, "
+        ".desktop-shortcut:focus label { color: #F4F1EA; background: transparent; }"
+        ".app-icon-badge, .app-icon-image { "
+        "background: #F4F1EA; border: none; border-radius: 4px; "
+        "box-shadow: none; }"
+        ".app-icon-letter { color: #111111; background: transparent; "
+        "font-family: 'DejaVu Sans Mono'; font-size: 28px; "
+        "font-weight: 800; }"
+        ".home-watermark { color: #111111; background: transparent; "
+        "font-size: 38px; font-weight: 800; letter-spacing: 0.16em; }"
+        ".statusbar { min-height: 48px; padding: 0 12px; "
+        "background: #F4F1EA; border-bottom: 2px solid #111111; "
+        "box-shadow: none; }"
+        ".status-clock, .status-network, .status-telemetry { "
+        "font-family: 'DejaVu Sans Mono'; color: #111111; "
+        "background: transparent; }"
+        ".status-clock { font-size: 18px; font-weight: 800; }"
+        ".status-network { font-size: 12px; }"
+        ".status-telemetry { font-size: 13px; font-weight: 700; "
+        "min-width: 390px; }"
+        ".panel { color: #111111; background: #F4F1EA; "
+        "border-bottom: 2px solid #111111; box-shadow: none; }"
+        ".muted { color: #111111; background: transparent; }"
+        ".launcher-row { min-height: 72px; background: transparent; "
+        "border: none; border-radius: 4px; }"
+        ".launcher-card { min-height: 72px; padding: 8px 12px; "
+        "background: #F4F1EA; color: #111111; "
+        "border: 2px solid #111111; border-radius: 4px; box-shadow: none; }"
+        ".launcher-card label { color: #111111; background: transparent; "
+        "font-size: 18px; }"
+        ".launcher-row:selected .launcher-card, "
+        ".launcher-row:active .launcher-card { "
+        "background: #111111; color: #F4F1EA; border: 2px solid #111111; }"
+        ".launcher-row:selected .launcher-card label, "
+        ".launcher-row:active .launcher-card label { "
+        "color: #F4F1EA; background: transparent; }"
+        ".title-1, .title-2 { color: #111111; background: transparent; "
         "font-size: 24px; font-weight: 800; }"
-        "window.fieldm-menu notebook header { background-color: #0D1015; border: 0; }"
-        "window.fieldm-menu notebook tab { min-height: 52px; "
-        "padding: 8px 12px; border-radius: 10px; "
-        "background-color: #11151C; color: #E6EDF3; margin: 3px; "
-        "border: 1px solid #21262D; }"
-        "window.fieldm-menu notebook tab:checked { "
-        "background-color: #1A2028; border: 1px solid #00E5A8; }"
-        ".statusbar { min-height: 48px; padding: 2px 10px; "
-        "background-color: #0D1015; border-bottom: 1px solid #21262D; }"
-        ".status-network { color: #AAB2BA; font-size: 11px; }"
-        ".status-clock { color: #E6EDF3; font-size: 16px; font-weight: 700; }"
-        ".status-telemetry { color: #E6EDF3; font-size: 13px; font-weight: 600; }"
-        ".panel { color: #E6EDF3; background-color: #0D1015; "
-        "border-bottom: 1px solid #21262D; }"
-        ".muted { color: #AAB2BA; }"
-        "button, entry, dropdown { min-height: 56px; border-radius: 12px; "
-        "padding: 8px 14px; font-size: 16px; }"
-        "button.panel-action { min-width: 48px; min-height: 48px; }"
-        "list > row { min-height: 72px; }"
-        ".launcher-row { background: transparent; border-radius: 14px; padding: 4px 0; }"
-        ".launcher-card { color: #E6EDF3; min-height: 72px; border-radius: 14px; "
-        "border: 1px solid #21262D; background-color: #11151C; padding: 8px 12px; }"
-        ".launcher-card label { color: #E6EDF3; }"
-        ".launcher-row:selected .launcher-card { background-color: #1A2028; "
-        "border-color: #00E5A8; color: #E6EDF3; }"
-        ".launcher-row:selected .launcher-card label { color: #E6EDF3; }"
-        "checkbutton { min-height: 52px; }"
-        ".desktop-shortcut { color: #E6EDF3; background-color: #11151C; "
-        "border: 1px solid #21262D; padding: 12px 8px; "
-        "min-width: 110px; min-height: 110px; border-radius: 16px; }"
-        ".desktop-shortcut:hover, .desktop-shortcut:focus { "
-        "background-color: #1A2028; border-color: #00E5A8; }"
-        ".desktop-shortcut label { color: #E6EDF3; font-size: 14px; font-weight: 600; }"
-        ".app-icon-badge { border-radius: 14px; background-color: #0D1015; "
-        "border: 1px solid #21262D; }"
-        ".app-icon-letter { color: #00E5A8; font-size: 25px; font-weight: 800; }"
-        ".app-icon-image { background-color: #0D1015; border-radius: 12px; }"
-        ".primary-action, .primary-action label { color: #0D1015; "
-        "background-color: #00E5A8; font-weight: 700; }"
-        "entry, list, notebook { border-radius: 10px; }";
+        "notebook header, notebook header tabs, notebook tab { "
+        "background: #F4F1EA; background-image: none; "
+        "border: 1px solid #111111; border-radius: 4px; "
+        "color: #111111; box-shadow: none; }"
+        "notebook tab:checked { background: #111111; color: #F4F1EA; }"
+        "notebook tab:checked label { color: #F4F1EA; }"
+        ".primary-action, .primary-action label { "
+        "background: #111111; background-image: none; "
+        "color: #F4F1EA; }";
     gtk_css_provider_load_from_string(state->styles, css);
 }
 
@@ -263,6 +289,43 @@ static void process_x_events(ShellState *state)
             event.xclient.message_type == state->command_atom &&
             event.xclient.data.l[0] == 1) {
             launcher_open(state);
+        } else if (event.type == ClientMessage &&
+                   event.xclient.window == state->command_window &&
+                   event.xclient.message_type == state->command_atom &&
+                   event.xclient.data.l[0] == 2) {
+            if (state->launcher != NULL) {
+                launcher_close(state);
+            } else if (state->settings != NULL) {
+                shell_keyboard_command("entry", "off");
+                gtk_widget_set_visible(state->settings, FALSE);
+            }
+        } else if (event.type == ClientMessage &&
+                   event.xclient.window == state->command_window &&
+                   event.xclient.message_type == state->command_atom &&
+                   event.xclient.data.l[0] >= 3 &&
+                   event.xclient.data.l[0] <= 5) {
+            if (state->launcher != NULL) {
+                launcher_close(state);
+            }
+            if (state->settings != NULL) {
+                gtk_widget_set_visible(state->settings, FALSE);
+            }
+            if (event.xclient.data.l[0] == 3 &&
+                state->desktop_window != NULL) {
+                gtk_window_present(GTK_WINDOW(state->desktop_window));
+            }
+            XClientMessageEvent message;
+            memset(&message, 0, sizeof(message));
+            message.type = ClientMessage;
+            message.window = DefaultRootWindow(state->xdisplay);
+            message.message_type = state->command_atom;
+            message.format = 32;
+            message.data.l[0] = event.xclient.data.l[0];
+            XSendEvent(state->xdisplay,
+                       DefaultRootWindow(state->xdisplay),
+                       False, SubstructureNotifyMask,
+                       (XEvent *)&message);
+            XFlush(state->xdisplay);
         }
     }
 }

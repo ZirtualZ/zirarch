@@ -18,7 +18,7 @@
 
 enum {
     MAX_CLIENTS = 128,
-    TITLE_HEIGHT = 48,
+    TITLE_HEIGHT = 64,
     MIN_WIDTH = 240,
     MIN_HEIGHT = 140,
     RESIZE_BORDER = 12,
@@ -26,7 +26,7 @@ enum {
     SWITCHER_WIDTH = 680,
     SWITCHER_ROW_HEIGHT = 64,
     STATUS_HEIGHT = 48,
-    TASKBAR_HEIGHT = 68,
+    TASKBAR_HEIGHT = 92,
     TASKBAR_BUTTON_MIN_WIDTH = 180,
     TASKBAR_BUTTON_MAX_WIDTH = 320,
     KEYBOARD_HEIGHT = 300
@@ -380,6 +380,9 @@ static int is_desktop_surface(Window window)
     Atom window_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
     Atom desktop_type = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DESKTOP",
                                     False);
+    Atom state_atom = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom skip_taskbar = XInternAtom(display, "_NET_WM_STATE_SKIP_TASKBAR",
+                                    False);
     Atom actual_type;
     int actual_format;
     unsigned long item_count;
@@ -400,6 +403,36 @@ static int is_desktop_surface(Window window)
     }
     if (value != NULL) {
         XFree(value);
+    }
+    if (!is_desktop &&
+        XGetWindowProperty(display, window, state_atom, 0, 16, False, XA_ATOM,
+                           &actual_type, &actual_format, &item_count,
+                           &bytes_after, &value) == Success &&
+        value != NULL && actual_type == XA_ATOM && actual_format == 32) {
+        Atom *states = (Atom *)value;
+        for (unsigned long i = 0; i < item_count; ++i) {
+            if (states[i] == skip_taskbar) {
+                is_desktop = 1;
+                break;
+            }
+        }
+    }
+    if (value != NULL) {
+        XFree(value);
+        value = NULL;
+    }
+    if (!is_desktop) {
+        XClassHint hint = {0};
+        if (XGetClassHint(display, window, &hint)) {
+            if ((hint.res_name != NULL &&
+                 strcmp(hint.res_name, "simple-desktop") == 0) ||
+                (hint.res_class != NULL &&
+                 strcmp(hint.res_class, "simple-desktop") == 0)) {
+                is_desktop = 1;
+            }
+            XFree(hint.res_name);
+            XFree(hint.res_class);
+        }
     }
     return is_desktop;
 }
@@ -430,19 +463,19 @@ static void draw_frame(int index)
         XFree(name);
     }
 
-    draw_round_rect(managed->frame, managed->width - 58, 6, 52, 52, 18,
+    draw_round_rect(managed->frame, managed->width - 64, 0, 64, 64, 4,
                     index == focused ? close_color : button_color);
     if (managed->terminal) {
-        draw_round_rect(managed->frame, managed->width - 122, 6, 52, 52, 18,
+        draw_round_rect(managed->frame, managed->width - 128, 0, 64, 64, 4,
                         index == focused ? accent_xft.pixel : button_color);
-        draw_text(managed->frame, "< >", managed->width - 112, 41,
-                  &text_xft, 32);
+        draw_text(managed->frame, "< >", managed->width - 118, 43,
+                  &text_xft, 48);
     }
     XSetForeground(display, gc, text_xft.pixel);
-    XDrawLine(display, managed->frame, gc, managed->width - 43, 20,
-              managed->width - 25, 42);
-    XDrawLine(display, managed->frame, gc, managed->width - 25, 20,
-              managed->width - 43, 42);
+    XDrawLine(display, managed->frame, gc, managed->width - 48, 16,
+              managed->width - 16, 48);
+    XDrawLine(display, managed->frame, gc, managed->width - 16, 16,
+              managed->width - 48, 48);
     XSetForeground(display, gc, outline_color);
     XDrawLine(display, managed->frame, gc, 0, TITLE_HEIGHT - 1,
               managed->width + RESIZE_BORDER, TITLE_HEIGHT - 1);
@@ -700,7 +733,7 @@ static void draw_taskbar_monitor(void)
     if (window == None || !taskbar_enabled) {
         return;
     }
-    XSetForeground(display, gc, named_color("#0D1015"));
+    XSetForeground(display, gc, named_color("#F4F1EA"));
     XFillRectangle(display, window, gc, 0, 0,
                    (unsigned int)width, TASKBAR_HEIGHT);
     XSetForeground(display, gc, outline_color);
@@ -709,15 +742,15 @@ static void draw_taskbar_monitor(void)
     static const char *labels[] = {"Apps", "Keyboard", "Windows"};
     for (int i = 0; i < 3; ++i) {
         int x = i * section_width;
-        draw_round_rect(window, x + 8, 10, section_width - 16, 48, 12,
-                        i == 0 ? button_active_color : button_color);
+        draw_round_rect(window, x + 8, 12, section_width - 16, 64, 4,
+                        button_color);
         if (i == 0) {
             XSetForeground(display, gc, accent_xft.pixel);
             XDrawRectangle(display, window, gc, x + 8, 10,
                            (unsigned int)(section_width - 16), 48);
         }
-        draw_text(window, labels[i], x + 24, 41, &text_xft,
-                  section_width - 48);
+        draw_text(window, labels[i], x + 8, 52, &text_xft,
+                  section_width - 16);
     }
 }
 
@@ -997,18 +1030,18 @@ int main(int argc, char **argv)
     Cursor pointer_cursor = XCreateFontCursor(display, XC_left_ptr);
     XDefineCursor(display, root, pointer_cursor);
     XFreeCursor(display, pointer_cursor);
-    frame_color = named_color("#0f1318");
-    active_color = named_color("#202731");
-    switcher_color = named_color("#171c23");
-    panel_color = named_color("#171c23");
-    button_color = named_color("#222933");
-    button_active_color = named_color("#303d3a");
-    outline_color = named_color("#303945");
-    close_color = named_color("#73343d");
+    frame_color = named_color("#F4F1EA");
+    active_color = named_color("#111111");
+    switcher_color = named_color("#F4F1EA");
+    panel_color = named_color("#F4F1EA");
+    button_color = named_color("#F4F1EA");
+    button_active_color = named_color("#111111");
+    outline_color = named_color("#111111");
+    close_color = named_color("#E2DDD2");
     gc = XCreateGC(display, root, 0, NULL);
-    ui_font = XftFontOpenName(display, screen, "sans:size=15");
+    ui_font = XftFontOpenName(display, screen, "DejaVu Serif:size=18");
     if (ui_font == NULL) {
-        ui_font = XftFontOpenName(display, screen, "monospace:size=15");
+        ui_font = XftFontOpenName(display, screen, "DejaVu Serif:size=18");
     }
     if (ui_font == NULL) {
         core_font = XLoadQueryFont(display, "fixed");
@@ -1017,10 +1050,10 @@ int main(int argc, char **argv)
         }
         fprintf(stderr, "simple-wm: using the X11 core font fallback\n");
     }
-    allocate_text_color("#eef2f6", &text_xft);
-    allocate_text_color("#a4afbb", &muted_xft);
-    allocate_text_color("#83d6b1", &accent_xft);
-    allocate_text_color("#15201c", &dark_xft);
+    allocate_text_color("#111111", &text_xft);
+    allocate_text_color("#111111", &muted_xft);
+    allocate_text_color("#111111", &accent_xft);
+    allocate_text_color("#F4F1EA", &dark_xft);
     XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask |
                  StructureNotifyMask | ButtonPressMask | KeyPressMask |
                  PropertyChangeMask);
@@ -1104,6 +1137,30 @@ int main(int argc, char **argv)
                 arrange_client(index);
             }
         } else if (event.type == ClientMessage) {
+            Atom desktop_command =
+                XInternAtom(display, "_FIELD_DESKTOP_COMMAND", False);
+            if (event.xclient.message_type == desktop_command) {
+                long command = event.xclient.data.l[0];
+                if (command == 3) {
+                    close_switcher();
+                    for (int i = 0; i < client_count; ++i) {
+                        XLowerWindow(display, clients[i].frame);
+                    }
+                    focused = -1;
+                    XSetInputFocus(display, root, RevertToPointerRoot,
+                                   CurrentTime);
+                    draw_taskbar();
+                } else if (command == 4) {
+                    if (switcher_window != None) {
+                        close_switcher();
+                    } else {
+                        show_switcher();
+                    }
+                } else if (command == 5) {
+                    send_launcher_command();
+                }
+                continue;
+            }
             Atom state_atom = XInternAtom(display, "_NET_WM_STATE", False);
             Atom fullscreen_atom =
                 XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", False);

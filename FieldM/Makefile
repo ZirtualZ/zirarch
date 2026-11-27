@@ -13,7 +13,7 @@ DESTDIR ?=
 
 .PHONY: all clean install check-gtk check-applications
 
-all: simple-desktop simple-wm fieldm-packages
+all: simple-desktop simple-wm fieldm-packages fieldm-keys
 
 DESKTOP_SOURCES = src/desktop.c src/applications.c \
 	src/appearance.c src/screen_layout.c src/shell/session.c \
@@ -52,14 +52,18 @@ fieldm-packages: src/packages.c
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ src/packages.c \
 		$(LDLIBS) $(GTK_LIBS)
 
+fieldm-keys: src/fieldm-keys.c
+	$(CC) $(CFLAGS) -std=c11 -o $@ src/fieldm-keys.c $(LDLIBS)
+
 install: all
 	install -Dm755 simple-desktop "$(DESTDIR)$(BINDIR)/simple-desktop"
 	install -Dm755 simple-wm "$(DESTDIR)$(BINDIR)/simple-wm"
 	install -Dm755 fieldm-packages "$(DESTDIR)$(BINDIR)/fieldm-packages"
+	install -Dm755 fieldm-keys "$(DESTDIR)$(BINDIR)/fieldm-keys"
 	install -Dm644 data/field-desktop.desktop \
 		"$(DESTDIR)$(XSESSIONDIR)/field-desktop.desktop"
 	install -Dm644 data/packages.desktop \
 		"$(DESTDIR)/usr/share/applications/packages.desktop"
 
 clean:
-	rm -f simple-desktop simple-wm fieldm-packages
+	rm -f simple-desktop simple-wm fieldm-packages fieldm-keys

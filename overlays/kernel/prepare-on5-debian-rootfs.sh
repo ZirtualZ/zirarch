@@ -147,6 +147,8 @@ install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/simple-wm" \
 	"$ROOT_DIR/usr/bin/simple-wm"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-packages" \
 	"$ROOT_DIR/usr/bin/fieldm-packages"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-keys" \
+	"$ROOT_DIR/usr/bin/fieldm-keys"
 
 install -m 755 "$KERNEL_DIR/wifi" "$ROOT_DIR/usr/bin/wifi"
 install -m 755 "$KERNEL_DIR/fbconsole/screen-console.initd" \

@@ -98,7 +98,7 @@ static GtkWidget *make_shortcut(ShellState *state, int action,
     GtkWidget *text = gtk_label_new(label);
     gtk_label_set_ellipsize(GTK_LABEL(text), PANGO_ELLIPSIZE_END);
     gtk_widget_add_css_class(button, "desktop-shortcut");
-    gtk_widget_set_size_request(button, 110, 110);
+    gtk_widget_set_size_request(button, 130, 130);
     gtk_button_set_child(GTK_BUTTON(button), content);
     gtk_box_append(GTK_BOX(content), badge);
     gtk_box_append(GTK_BOX(content), text);
@@ -120,6 +120,7 @@ static GtkWidget *make_panel(ShellState *state)
     gtk_widget_add_css_class(panel, "statusbar");
     gtk_widget_set_size_request(panel, -1, 48);
     GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_size_request(left, 220, -1);
     GtkWidget *clock = gtk_label_new("00:00");
     gtk_widget_add_css_class(clock, "status-clock");
     gtk_label_set_xalign(GTK_LABEL(clock), 0.0f);
@@ -130,7 +131,7 @@ static GtkWidget *make_panel(ShellState *state)
     gtk_box_append(GTK_BOX(left), network);
     gtk_widget_set_halign(left, GTK_ALIGN_START);
 
-    GtkWidget *telemetry = gtk_label_new("C-- R-- D-- B--");
+    GtkWidget *telemetry = gtk_label_new("CPU -- RAM -- / -- BAT --");
     gtk_widget_add_css_class(telemetry, "status-telemetry");
     gtk_label_set_xalign(GTK_LABEL(telemetry), 1.0f);
     gtk_widget_set_hexpand(telemetry, TRUE);
@@ -194,6 +195,7 @@ static int status_ram_percent(void)
         return -1;
     }
     unsigned long total = 0, available = 0;
+    unsigned long free_kb = 0, buffers = 0, cached = 0;
     char key[32];
     unsigned long value;
     char unit[16];
@@ -202,6 +204,12 @@ static int status_ram_percent(void)
             total = value;
         } else if (strcmp(key, "MemAvailable:") == 0) {
             available = value;
+        } else if (strcmp(key, "MemFree:") == 0) {
+            free_kb = value;
+        } else if (strcmp(key, "Buffers:") == 0) {
+            buffers = value;
+        } else if (strcmp(key, "Cached:") == 0) {
+            cached = value;
         }
         if (total != 0 && available != 0) {
             break;
@@ -210,6 +218,9 @@ static int status_ram_percent(void)
     fclose(file);
     if (total == 0) {
         return -1;
+    }
+    if (available == 0) {
+        available = free_kb + buffers + cached;
     }
     unsigned long used = total > available ? total - available : 0;
     return (int)(used * 100 / total);
@@ -325,10 +336,13 @@ static gboolean status_refresh(gpointer data)
                disk >= 0 ? "%d%%" : "--", disk);
     g_snprintf(battery_text, sizeof(battery_text),
                battery >= 0 ? "%d%%" : "--", battery);
+    if (battery < 0) {
+        g_snprintf(battery_text, sizeof(battery_text), "--");
+    }
     g_snprintf(telemetry, sizeof(telemetry),
-               "C%s R%s D%s B%s%s",
+               "CPU %s RAM %s / %s BAT %s%s",
                cpu_text, ram_text, disk_text, battery_text,
-               battery_mark);
+               battery_mark[0] != '\0' ? " *" : "");
     if (state->status_telemetry != NULL) {
         gtk_label_set_text(GTK_LABEL(state->status_telemetry), telemetry);
     }
@@ -379,6 +393,12 @@ static int set_desktop_window_type(ShellState *state, GtkWidget *window)
                     XInternAtom(state->xdisplay, "_NET_WM_WINDOW_TYPE", False),
                     XA_ATOM, 32, PropModeReplace,
                     (unsigned char *)&state->desktop_type_atom, 1);
+    Atom skip_taskbar = XInternAtom(
+        state->xdisplay, "_NET_WM_STATE_SKIP_TASKBAR", False);
+    XChangeProperty(state->xdisplay, xid,
+                    XInternAtom(state->xdisplay, "_NET_WM_STATE", False),
+                    XA_ATOM, 32, PropModeReplace,
+                    (unsigned char *)&skip_taskbar, 1);
     unsigned long strut[4] = {0, 0, 48, 0};
     XChangeProperty(state->xdisplay, xid,
                     XInternAtom(state->xdisplay, "_NET_WM_STRUT", False),
@@ -450,23 +470,23 @@ static GtkWidget *make_desktop_window(ShellState *state)
         state->status_panel = NULL;
     }
 
-    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 18);
-    gtk_widget_set_margin_start(body, 24);
-    gtk_widget_set_margin_top(body, 22);
-    gtk_widget_set_margin_end(body, 24);
+    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 36);
+    gtk_widget_set_margin_start(body, 50);
+    gtk_widget_set_margin_top(body, 40);
+    gtk_widget_set_margin_end(body, 50);
     gtk_widget_set_margin_bottom(body, 24);
     gtk_widget_set_vexpand(body, TRUE);
     gtk_box_append(GTK_BOX(surface), body);
 
     GtkWidget *watermark = gtk_label_new("ZIRARCH");
     gtk_widget_add_css_class(watermark, "home-watermark");
-    gtk_label_set_xalign(GTK_LABEL(watermark), 0.5f);
+    gtk_label_set_xalign(GTK_LABEL(watermark), 0.0f);
     gtk_widget_set_margin_bottom(watermark, 8);
     gtk_box_append(GTK_BOX(body), watermark);
 
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 14);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 40);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 50);
     gtk_widget_set_halign(grid, GTK_ALIGN_CENTER);
     for (int i = 0; i < (int)(sizeof(shortcuts) / sizeof(shortcuts[0])); ++i) {
         GtkWidget *button = make_shortcut(state, shortcuts[i].action,

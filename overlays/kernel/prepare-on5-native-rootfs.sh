@@ -80,6 +80,10 @@ install -m 755 "$PROJECT_DIR/FieldM/simple-desktop.armv7" \
 	"$ROOT_DIR/usr/bin/simple-desktop"
 install -m 755 "$PROJECT_DIR/FieldM/simple-wm.armv7" \
 	"$ROOT_DIR/usr/bin/simple-wm"
+if [ -f "$PROJECT_DIR/FieldM/fieldm-keys.armv7" ]; then
+	install -m 755 "$PROJECT_DIR/FieldM/fieldm-keys.armv7" \
+		"$ROOT_DIR/usr/bin/fieldm-keys"
+fi
 install -m 755 "$KERNEL_DIR/fbconsole/screen-console.initd" \
 	"$ROOT_DIR/etc/init.d/screen-console"
 
