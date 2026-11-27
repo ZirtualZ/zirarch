@@ -489,24 +489,14 @@ static void activate(GtkApplication *application, gpointer data)
     gtk_window_set_default_size(state->window, 700, 1100);
 
     GtkCssProvider *css = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(
-        css,
-        "window { background-color: #11151b; color: #f4f6f8; }"
-        "label { color: #f4f6f8; }"
-        "button, entry { min-height: 56px; border-radius: 12px; "
-        "background-color: #171c24; color: #f4f6f8; "
-        "border: 1px solid #303a46; "
-        "transition: background-color 120ms ease; }"
-        "button:hover { background-color: #26313d; }"
-        "list > row { min-height: 72px; }"
-        ".package-name { font-weight: 700; font-size: 17px; }"
-        ".package-state { font-weight: 600; }"
-        ".package-action { min-width: 112px; }"
-        ".muted { opacity: 0.72; }"
-        "textview { padding: 10px; font-family: monospace; }");
+    const char *css_path = g_file_test(
+        "/usr/share/fieldm/fieldm.css", G_FILE_TEST_IS_REGULAR)
+        ? "/usr/share/fieldm/fieldm.css"
+        : "/mnt/zirarch/zirarch/FieldM/data/fieldm.css";
+    gtk_css_provider_load_from_path(css, css_path);
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(), GTK_STYLE_PROVIDER(css),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        GTK_STYLE_PROVIDER_PRIORITY_USER);
     g_object_unref(css);
 
     GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);

@@ -55,6 +55,9 @@ typedef struct {
     GtkWidget *settings;
     GtkWidget *launcher_entry;
     GtkWidget *launcher_results;
+    GtkWidget *home_search;
+    GtkWidget *home_grid;
+    GtkWidget *recents;
     GtkWidget *wallpaper_toggle;
     GtkWidget *icon_theme_dropdown;
     GtkCssProvider *styles;
@@ -87,5 +90,7 @@ void desktop_view_center_window(ShellState *state, GtkWidget *window,
 void launcher_open(ShellState *state);
 void launcher_close(ShellState *state);
 void settings_open(ShellState *state);
+void recents_open(ShellState *state);
+void recents_close(ShellState *state);
 
 #endif

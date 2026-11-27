@@ -31,7 +31,7 @@ keyboard_pid()
 	kill -0 "$pid" 2>/dev/null || return 1
 	[ -r "/proc/$pid/cmdline" ] || return 1
 	tr '\0' ' ' < "/proc/$pid/cmdline" |
-		grep -Eq '(^|[ /])(svkbd|fieldm-onboard|onboard)([[:space:]]|$)'
+		grep -Eq '(^|[ /])(fieldm-kbd|svkbd|fieldm-onboard|onboard)([[:space:]]|$)'
 }
 
 keyboard_visible()
@@ -62,7 +62,9 @@ keyboard_dbus()
 start_keyboard()
 {
 	rm -f "$pidfile"
-	if command -v svkbd-mobile-intl >/dev/null 2>&1; then
+	if command -v fieldm-kbd >/dev/null 2>&1; then
+		fieldm-kbd &
+	elif command -v svkbd-mobile-intl >/dev/null 2>&1; then
 		svkbd-mobile-intl -d -g 720x300+0-0 &
 	elif command -v fieldm-onboard >/dev/null 2>&1; then
 		fieldm-onboard --layout Phone --size 720x300 -x 0 -y 980 &
@@ -89,6 +91,12 @@ hide_when_released()
 			keyboard_dbus Hide || :
 			[ -x /usr/bin/fieldm-hide-keyboard ] &&
 				/usr/bin/fieldm-hide-keyboard
+			if [ "$(cat "$pidfile" 2>/dev/null)" ] &&
+			   tr '\0' ' ' < "/proc/$(cat "$pidfile")/cmdline" 2>/dev/null |
+			   grep -q fieldm-kbd; then
+				kill "$(cat "$pidfile")" 2>/dev/null || :
+				rm -f "$pidfile"
+			fi
 			exit 0
 		done
 	) &

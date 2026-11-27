@@ -1,383 +1,209 @@
 #include "gtk_shell_internal.h"
-#include "icon_themes.h"
 #include "wifi.h"
 
-static gboolean window_closed(GtkWindow *window, gpointer data)
-{
-    ShellState *state = data;
-    if (state->settings == GTK_WIDGET(window)) {
-        shell_keyboard_command("entry", "off");
-        gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
-    }
-    return GDK_EVENT_STOP;
-}
+#include <X11/Xlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/statvfs.h>
 
-static gboolean key_pressed(GtkEventControllerKey *controller,
-                            guint keyval, guint keycode,
-                            GdkModifierType modifiers, gpointer data)
+static void back_clicked(GtkButton *button, gpointer data)
 {
-    ShellState *state = data;
-    (void)controller;
-    (void)keycode;
-    (void)modifiers;
-    if (keyval != GDK_KEY_Escape) {
-        return GDK_EVENT_PROPAGATE;
-    }
-    GtkWidget *window = state->settings;
-    if (window != NULL) {
-        shell_keyboard_command("entry", "off");
-        gtk_widget_set_visible(window, FALSE);
-    }
-    return GDK_EVENT_STOP;
-}
-
-static void option_toggled(GtkCheckButton *button, gpointer data)
-{
-    ShellState *state = data;
-    const char *option = g_object_get_data(G_OBJECT(button), "option");
-    int enabled = gtk_check_button_get_active(button);
-    if (strcmp(option, "panel") == 0) {
-        state->top_panel = enabled;
-        shell_refresh_desktop_windows(state);
-    } else if (strcmp(option, "taskbar") == 0) {
-        state->taskbar = enabled;
-    }
-    if (!shell_save_settings(state)) {
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "The desktop preference could not be saved.");
-    }
-}
-
-static void theme_changed(GObject *object, GParamSpec *parameter, gpointer data)
-{
-    ShellState *state = data;
-    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(object));
-    if (selected == GTK_INVALID_LIST_POSITION ||
-        !appearance_select_theme(&state->appearance, (int)selected)) {
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "The appearance setting could not be saved.");
-        return;
-    }
-    shell_update_styles(state);
-    (void)parameter;
-}
-
-static void background_changed(GObject *object, GParamSpec *parameter,
-                               gpointer data)
-{
-    ShellState *state = data;
-    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(object));
-    if (selected == GTK_INVALID_LIST_POSITION ||
-        !appearance_select_background(&state->appearance, (int)selected)) {
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "The background setting could not be saved.");
-        return;
-    }
-    shell_update_styles(state);
-    shell_update_wallpapers(state);
-    if (state->wallpaper_toggle != NULL) {
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(state->wallpaper_toggle),
-                                    FALSE);
-    }
-    (void)parameter;
-}
-
-static void icon_theme_changed(GObject *object, GParamSpec *parameter,
-                              gpointer data)
-{
-    ShellState *state = data;
-    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(object));
-    if (selected == GTK_INVALID_LIST_POSITION ||
-        selected >= state->icon_themes->len) {
-        return;
-    }
-    ShellIconTheme *theme = g_ptr_array_index(state->icon_themes, selected);
-    char previous[SHELL_ICON_THEME_ID_SIZE];
-    snprintf(previous, sizeof(previous), "%s", state->icon_theme_id);
-    if (!icon_themes_select(state, theme->id) ||
-        !shell_save_settings(state)) {
-        icon_themes_select(state, previous);
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "The icon theme could not be saved.");
-        return;
-    }
-    (void)parameter;
-}
-
-static GtkWidget *make_icon_theme_selector(ShellState *state)
-{
-    guint count = state->icon_themes != NULL
-        ? state->icon_themes->len : 0;
-    const char **names = g_new0(const char *, count + 1);
-    guint selected = 0;
-    for (guint i = 0; i < count; ++i) {
-        ShellIconTheme *theme = g_ptr_array_index(state->icon_themes, i);
-        names[i] = theme->name;
-        if (strcmp(theme->id, state->icon_theme_id) == 0) {
-            selected = i;
-        }
-    }
-    GtkStringList *model = gtk_string_list_new(names);
-    GtkWidget *dropdown = gtk_drop_down_new(G_LIST_MODEL(model), NULL);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), selected);
-    g_signal_connect(dropdown, "notify::selected",
-                     G_CALLBACK(icon_theme_changed), state);
-    state->icon_theme_dropdown = dropdown;
-    g_object_unref(model);
-    g_free(names);
-    return dropdown;
-}
-
-static void refresh_icon_themes(GtkButton *button, gpointer data)
-{
-    ShellState *state = data;
-    icon_themes_initialize(state);
-    if (state->icon_theme_dropdown == NULL || state->icon_themes == NULL) {
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "Could not refresh installed icon themes.");
-        return;
-    }
-    guint count = state->icon_themes->len;
-    const char **names = g_new0(const char *, count + 1);
-    guint selected = 0;
-    for (guint i = 0; i < count; ++i) {
-        ShellIconTheme *theme = g_ptr_array_index(state->icon_themes, i);
-        names[i] = theme->name;
-        if (strcmp(theme->id, state->icon_theme_id) == 0) {
-            selected = i;
-        }
-    }
-    GtkStringList *model = gtk_string_list_new(names);
-    gtk_drop_down_set_model(GTK_DROP_DOWN(state->icon_theme_dropdown),
-                            G_LIST_MODEL(model));
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(state->icon_theme_dropdown),
-                               selected);
-    g_object_unref(model);
-    g_free(names);
+    GtkWidget *window = data;
+    shell_keyboard_command("entry", "off");
+    gtk_widget_set_visible(window, FALSE);
     (void)button;
 }
 
-static void wallpaper_toggled(GtkCheckButton *button, gpointer data)
+static gboolean settings_close_requested(GtkWindow *window, gpointer data)
 {
-    ShellState *state = data;
-    int enabled = gtk_check_button_get_active(button);
-    if (enabled && state->appearance.image_path[0] == '\0') {
-        gtk_check_button_set_active(button, FALSE);
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "Choose a wallpaper image before enabling it.");
-        return;
-    }
-    int previous_enabled = state->appearance.image_enabled;
-    state->appearance.image_enabled = enabled;
-    if (!appearance_save(&state->appearance)) {
-        state->appearance.image_enabled = previous_enabled;
-        gtk_check_button_set_active(button, !enabled);
-        shell_show_error(GTK_WINDOW(state->settings),
-                         "The wallpaper setting could not be saved.");
-        return;
-    }
-    shell_update_wallpapers(state);
+    shell_keyboard_command("entry", "off");
+    gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+    (void)data;
+    return TRUE;
 }
 
-static void wallpaper_selected(GObject *source, GAsyncResult *result,
-                               gpointer data)
+static gboolean settings_key(GtkEventControllerKey *controller,
+                             guint keyval, guint keycode,
+                             GdkModifierType modifiers, gpointer data)
 {
-    ShellState *state = data;
-    GError *error = NULL;
-    GFile *file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result,
-                                              &error);
-    if (file != NULL) {
-        char *path = g_file_get_path(file);
-        if (path == NULL ||
-            !appearance_select_image(&state->appearance, path)) {
-            shell_show_error(GTK_WINDOW(state->settings),
-                             "The selected wallpaper could not be saved.");
-        } else {
-            state->appearance.image_enabled = 1;
-            if (!appearance_save(&state->appearance)) {
-                shell_show_error(GTK_WINDOW(state->settings),
-                                 "The wallpaper could not be enabled.");
-            } else {
-                shell_update_wallpapers(state);
-                if (state->wallpaper_toggle != NULL) {
-                    gtk_check_button_set_active(
-                        GTK_CHECK_BUTTON(state->wallpaper_toggle), TRUE);
-                }
+    (void)controller; (void)keycode; (void)modifiers;
+    if (keyval == GDK_KEY_Escape) {
+        back_clicked(NULL, data);
+        return GDK_EVENT_STOP;
+    }
+    return GDK_EVENT_PROPAGATE;
+}
+
+static GtkWidget *heading(const char *title)
+{
+    GtkWidget *label = gtk_label_new(title);
+    gtk_widget_add_css_class(label, "title-2");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    return label;
+}
+
+static GtkWidget *row(const char *name)
+{
+    GtkWidget *widget = gtk_button_new_with_label(name);
+    gtk_widget_add_css_class(widget, "settings-row");
+    gtk_widget_set_hexpand(widget, TRUE);
+    gtk_widget_set_halign(widget, GTK_ALIGN_FILL);
+    return widget;
+}
+
+static void display_apply(GtkButton *button, gpointer data)
+{
+    const char *brightness = g_object_get_data(G_OBJECT(button), "brightness");
+    const char *dpi = g_object_get_data(G_OBJECT(button), "dpi");
+    if (brightness != NULL) {
+        FILE *file = fopen("/sys/class/backlight/panel/brightness", "w");
+        if (file != NULL) {
+            fprintf(file, "%s", brightness);
+            fclose(file);
+        }
+    }
+    if (dpi != NULL) {
+        char path[1200];
+        const char *home = getenv("HOME");
+        if (home != NULL) {
+            snprintf(path, sizeof(path), "%s/.Xresources", home);
+            FILE *file = fopen(path, "w");
+            if (file != NULL) {
+                fprintf(file, "Xft.dpi: %s\n", dpi);
+                fclose(file);
             }
         }
-        g_free(path);
-        g_clear_object(&file);
-    } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-        shell_show_error(GTK_WINDOW(state->settings),
-                         error != NULL ? error->message :
-                         "The wallpaper picker could not be opened.");
     }
-    g_clear_error(&error);
+    (void)data;
 }
 
-static void choose_wallpaper(GtkButton *button, gpointer data)
+static GtkWidget *display_page(void)
 {
-    ShellState *state = data;
-    GtkFileDialog *chooser = gtk_file_dialog_new();
-    gtk_file_dialog_set_title(chooser, "Choose desktop wallpaper");
-    GtkFileFilter *filter = gtk_file_filter_new();
-    gtk_file_filter_set_name(filter, "Images");
-    gtk_file_filter_add_mime_type(filter, "image/*");
-    GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
-    g_list_store_append(filters, filter);
-    gtk_file_dialog_set_filters(chooser, G_LIST_MODEL(filters));
-    gtk_file_dialog_open(chooser, GTK_WINDOW(state->settings), NULL,
-                         wallpaper_selected, state);
-    g_object_unref(filters);
-    g_object_unref(filter);
-    g_object_unref(chooser);
-    (void)button;
-}
-
-static GtkWidget *make_appearance_page(ShellState *state)
-{
-    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
-    gtk_widget_set_margin_start(page, 20);
-    gtk_widget_set_margin_end(page, 20);
-    gtk_widget_set_margin_top(page, 18);
-    gtk_widget_set_margin_bottom(page, 18);
-    GtkWidget *heading = gtk_label_new("Appearance");
-    gtk_widget_add_css_class(heading, "title-2");
-    gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
-    gtk_box_append(GTK_BOX(page), heading);
-
-    GtkWidget *theme_label = gtk_label_new("Color theme");
-    gtk_label_set_xalign(GTK_LABEL(theme_label), 0.0f);
-    const char *theme_names[5] = {NULL};
-    for (size_t i = 0; i < appearance_theme_count(); ++i) {
-        const AppearanceTheme *theme = appearance_theme_at(i);
-        if (theme != NULL) {
-            theme_names[i] = theme->name;
-        }
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_box_append(GTK_BOX(page), heading("Display"));
+    gtk_box_append(GTK_BOX(page), row("Brightness"));
+    for (int i = 0; i < 3; ++i) {
+        GtkWidget *button = gtk_button_new_with_label(
+            i == 0 ? "Brightness 25%" : i == 1 ? "Brightness 50%" : "Brightness 100%");
+        g_object_set_data_full(G_OBJECT(button), "brightness",
+                               g_strdup(i == 0 ? "34" : i == 1 ? "67" : "134"),
+                               g_free);
+        g_signal_connect(button, "clicked", G_CALLBACK(display_apply), NULL);
+        gtk_box_append(GTK_BOX(page), button);
     }
-    GtkWidget *themes = gtk_drop_down_new_from_strings(theme_names);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(themes), state->appearance.theme);
-    g_signal_connect(themes, "notify::selected",
-                     G_CALLBACK(theme_changed), state);
-
-    GtkWidget *background_label = gtk_label_new("Desktop background");
-    gtk_label_set_xalign(GTK_LABEL(background_label), 0.0f);
-    const char *background_names[5] = {NULL};
-    for (size_t i = 0; i < appearance_background_count(); ++i) {
-        background_names[i] = appearance_background_name((int)i);
-    }
-    GtkWidget *backgrounds = gtk_drop_down_new_from_strings(background_names);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(backgrounds),
-                               state->appearance.background);
-    g_signal_connect(backgrounds, "notify::selected",
-                     G_CALLBACK(background_changed), state);
-
-    state->wallpaper_toggle = gtk_check_button_new_with_label(
-        "Use the selected image as wallpaper");
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(state->wallpaper_toggle),
-                                state->appearance.image_enabled);
-    g_signal_connect(state->wallpaper_toggle, "toggled",
-                     G_CALLBACK(wallpaper_toggled), state);
-    GtkWidget *choose = gtk_button_new_with_label("Choose wallpaper image...");
-    g_signal_connect(choose, "clicked", G_CALLBACK(choose_wallpaper), state);
-
-    gtk_box_append(GTK_BOX(page), theme_label);
-    gtk_box_append(GTK_BOX(page), themes);
-    GtkWidget *icon_theme_label = gtk_label_new("Icon pack");
-    gtk_label_set_xalign(GTK_LABEL(icon_theme_label), 0.0f);
-    gtk_box_append(GTK_BOX(page), icon_theme_label);
-    gtk_box_append(GTK_BOX(page), make_icon_theme_selector(state));
-    GtkWidget *icon_theme_help = gtk_label_new(
-        "Installed themes are discovered from your icon folders and system packages.");
-    gtk_label_set_xalign(GTK_LABEL(icon_theme_help), 0.0f);
-    gtk_label_set_wrap(GTK_LABEL(icon_theme_help), TRUE);
-    gtk_widget_add_css_class(icon_theme_help, "muted");
-    gtk_box_append(GTK_BOX(page), icon_theme_help);
-    GtkWidget *refresh = gtk_button_new_with_label("Find installed icon packs");
-    g_signal_connect(refresh, "clicked",
-                     G_CALLBACK(refresh_icon_themes), state);
-    gtk_box_append(GTK_BOX(page), refresh);
-    gtk_box_append(GTK_BOX(page), background_label);
-    gtk_box_append(GTK_BOX(page), backgrounds);
-    gtk_box_append(GTK_BOX(page), state->wallpaper_toggle);
-    gtk_box_append(GTK_BOX(page), choose);
-    GtkWidget *scroll = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
-                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), page);
-    return scroll;
-}
-
-static GtkWidget *make_desktop_page(ShellState *state)
-{
-    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
-    gtk_widget_set_margin_start(page, 20);
-    gtk_widget_set_margin_end(page, 20);
-    gtk_widget_set_margin_top(page, 18);
-    gtk_widget_set_margin_bottom(page, 18);
-    GtkWidget *heading = gtk_label_new("Desktop");
-    gtk_widget_add_css_class(heading, "title-2");
-    gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
-    gtk_box_append(GTK_BOX(page), heading);
-    const struct {
-        const char *label;
-        const char *option;
-        int active;
-    } options[] = {
-        {"Show the top panel", "panel", state->top_panel},
-        {"Show the window-manager taskbar", "taskbar", state->taskbar}
-    };
-    for (size_t i = 0; i < sizeof(options) / sizeof(options[0]); ++i) {
-        GtkWidget *check = gtk_check_button_new_with_label(options[i].label);
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(check), options[i].active);
-        g_object_set_data(G_OBJECT(check), "option",
-                          (gpointer)options[i].option);
-        g_signal_connect(check, "toggled",
-                         G_CALLBACK(option_toggled), state);
-        gtk_box_append(GTK_BOX(page), check);
+    gtk_box_append(GTK_BOX(page), gtk_label_new("Text size"));
+    const char *dpis[] = {"144", "168", "192"};
+    for (int i = 0; i < 3; ++i) {
+        GtkWidget *button = gtk_button_new_with_label(dpis[i]);
+        g_object_set_data_full(G_OBJECT(button), "dpi",
+                               g_strdup(dpis[i]), g_free);
+        g_signal_connect(button, "clicked", G_CALLBACK(display_apply), NULL);
+        gtk_box_append(GTK_BOX(page), button);
     }
     return page;
 }
 
+static GtkWidget *keyboard_page(void)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_box_append(GTK_BOX(page), heading("Keyboard"));
+    gtk_box_append(GTK_BOX(page), row("Layout: QWERTY"));
+    gtk_box_append(GTK_BOX(page), row("Terminal row: enabled"));
+    gtk_box_append(GTK_BOX(page), row("Ctrl is sticky"));
+    return page;
+}
+
+static GtkWidget *storage_page(void)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_box_append(GTK_BOX(page), heading("Storage"));
+    struct statvfs info;
+    char text[128];
+    if (statvfs("/", &info) == 0 && info.f_blocks != 0) {
+        unsigned long long total = info.f_blocks * info.f_frsize;
+        unsigned long long used = (info.f_blocks - info.f_bfree) * info.f_frsize;
+        snprintf(text, sizeof(text), "%llu MiB used of %llu MiB",
+                 used >> 20, total >> 20);
+    } else {
+        snprintf(text, sizeof(text), "Root disk usage unavailable");
+    }
+    gtk_box_append(GTK_BOX(page), gtk_label_new(text));
+    return page;
+}
+
+static GtkWidget *about_page(void)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_box_append(GTK_BOX(page), heading("About"));
+    gtk_box_append(GTK_BOX(page), gtk_label_new("Samsung Galaxy On5 SM-G550T"));
+    char kernel[256] = "Kernel unavailable";
+    FILE *file = fopen("/proc/sys/kernel/osrelease", "r");
+    if (file != NULL) {
+        fgets(kernel, sizeof(kernel), file);
+        fclose(file);
+        kernel[strcspn(kernel, "\r\n")] = '\0';
+    }
+    char model[256];
+    snprintf(model, sizeof(model), "Kernel %s", kernel);
+    gtk_box_append(GTK_BOX(page), gtk_label_new(model));
+    return page;
+}
+
+static void open_section(GtkButton *button, gpointer data)
+{
+    GtkStack *stack = data;
+    const char *name = g_object_get_data(G_OBJECT(button), "section");
+    gtk_stack_set_visible_child_name(stack, name);
+}
+
 void settings_open(ShellState *state)
 {
-    if (state->settings != NULL) {
-        gtk_window_present(GTK_WINDOW(state->settings));
-        return;
+    if (state->settings == NULL) {
+        GtkWidget *window = gtk_application_window_new(state->application);
+        state->settings = window;
+        gtk_window_set_title(GTK_WINDOW(window), "Settings");
+        gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
+        gtk_window_set_default_size(GTK_WINDOW(window),
+                                    state->screen.width,
+                                    state->screen.height);
+        GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        GtkWidget *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *back = gtk_button_new_with_label("Back");
+        gtk_widget_set_size_request(back, 64, 64);
+        g_signal_connect(back, "clicked", G_CALLBACK(back_clicked), window);
+        GtkWidget *title = heading("Settings");
+        gtk_box_append(GTK_BOX(header), back);
+        gtk_box_append(GTK_BOX(header), title);
+        gtk_box_append(GTK_BOX(root), header);
+        GtkStack *stack = GTK_STACK(gtk_stack_new());
+        gtk_stack_set_transition_type(stack, GTK_STACK_TRANSITION_TYPE_NONE);
+        gtk_widget_set_vexpand(GTK_WIDGET(stack), TRUE);
+        GtkWidget *menu = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+        gtk_widget_set_margin_start(menu, 20);
+        gtk_widget_set_margin_end(menu, 20);
+        gtk_widget_set_margin_top(menu, 12);
+        gtk_widget_set_margin_bottom(menu, 12);
+        gtk_stack_add_named(stack, menu, "menu");
+        gtk_stack_add_named(stack, wifi_page_new(GTK_WINDOW(window)), "wifi");
+        gtk_stack_add_named(stack, display_page(), "display");
+        gtk_stack_add_named(stack, keyboard_page(), "keyboard");
+        gtk_stack_add_named(stack, storage_page(), "storage");
+        gtk_stack_add_named(stack, about_page(), "about");
+        const char *names[] = {"Wi-Fi", "Display", "Keyboard", "Storage", "About"};
+        const char *ids[] = {"wifi", "display", "keyboard", "storage", "about"};
+        for (int i = 0; i < 5; ++i) {
+            GtkWidget *button = row(names[i]);
+            g_object_set_data(G_OBJECT(button), "section", (gpointer)ids[i]);
+            g_signal_connect(button, "clicked", G_CALLBACK(open_section), stack);
+            gtk_box_append(GTK_BOX(menu), button);
+        }
+        gtk_box_append(GTK_BOX(root), GTK_WIDGET(stack));
+        gtk_window_set_child(GTK_WINDOW(window), root);
+        GtkEventController *keys = gtk_event_controller_key_new();
+        g_signal_connect(keys, "key-pressed", G_CALLBACK(settings_key), window);
+        gtk_widget_add_controller(window, keys);
+        g_signal_connect(window, "close-request",
+                         G_CALLBACK(settings_close_requested), state);
     }
-    GtkWidget *window = gtk_application_window_new(state->application);
-    state->settings = window;
-    gtk_widget_add_css_class(window, "fieldm-menu");
-    gtk_window_set_title(GTK_WINDOW(window), "Field Desktop Settings");
-    gtk_window_set_default_size(GTK_WINDOW(window), 688, 1080);
-    gtk_window_set_hide_on_close(GTK_WINDOW(window), TRUE);
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_widget_set_margin_start(box, 18);
-    gtk_widget_set_margin_end(box, 18);
-    gtk_widget_set_margin_top(box, 18);
-    gtk_widget_set_margin_bottom(box, 18);
-    GtkWidget *heading = gtk_label_new("Zirarch Settings");
-    gtk_widget_add_css_class(heading, "title-1");
-    gtk_label_set_xalign(GTK_LABEL(heading), 0.0f);
-    GtkWidget *notebook = gtk_notebook_new();
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook),
-                             make_appearance_page(state),
-                             gtk_label_new("Appearance"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook),
-                             wifi_page_new(GTK_WINDOW(window)),
-                             gtk_label_new("Wi-Fi"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook),
-                             make_desktop_page(state),
-                             gtk_label_new("Desktop"));
-    gtk_box_append(GTK_BOX(box), heading);
-    gtk_box_append(GTK_BOX(box), notebook);
-    gtk_window_set_child(GTK_WINDOW(window), box);
-    GtkEventController *keys = gtk_event_controller_key_new();
-    g_signal_connect(keys, "key-pressed", G_CALLBACK(key_pressed), state);
-    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
-    gtk_widget_add_controller(window, keys);
-    g_signal_connect(window, "close-request",
-                     G_CALLBACK(window_closed), state);
-    desktop_view_center_window(state, window, 688, 1080);
-    gtk_window_present(GTK_WINDOW(window));
+    gtk_window_present(GTK_WINDOW(state->settings));
 }

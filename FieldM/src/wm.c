@@ -16,9 +16,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "theme.h"
+
 enum {
     MAX_CLIENTS = 128,
-    TITLE_HEIGHT = 64,
+    TITLE_HEIGHT = FIELD_M_TITLE_HEIGHT,
     MIN_WIDTH = 240,
     MIN_HEIGHT = 140,
     RESIZE_BORDER = 12,
@@ -26,10 +28,10 @@ enum {
     SWITCHER_WIDTH = 680,
     SWITCHER_ROW_HEIGHT = 64,
     STATUS_HEIGHT = 48,
-    TASKBAR_HEIGHT = 92,
+    TASKBAR_HEIGHT = 0,
     TASKBAR_BUTTON_MIN_WIDTH = 180,
     TASKBAR_BUTTON_MAX_WIDTH = 320,
-    KEYBOARD_HEIGHT = 300
+    KEYBOARD_HEIGHT = FIELD_M_KEYBOARD_HEIGHT
 };
 
 typedef struct {
@@ -68,7 +70,7 @@ static Window switcher_window;
 static Window taskbar_window;
 static Window keyboard_window;
 static ScreenGeometry screen_layout;
-static int taskbar_enabled = 1;
+static int taskbar_enabled = 0;
 static int terminal_count;
 
 static void show_switcher(void);
@@ -147,7 +149,7 @@ static int client_is_terminal(Window window)
 
 static int text_matches_keyboard(const char *text)
 {
-    static const char *const names[] = {"svkbd", "onboard"};
+    static const char *const names[] = {"svkbd", "onboard", "fieldm-kbd"};
     if (text == NULL) {
         return 0;
     }
@@ -199,6 +201,11 @@ static void place_keyboard_window(Window window)
                       (unsigned int)screen_layout.width, KEYBOARD_HEIGHT);
     XSetWindowBorderWidth(display, window, 0);
     XSelectInput(display, window, StructureNotifyMask | PropertyChangeMask);
+    unsigned long strut[4] = {0, 0, 0, KEYBOARD_HEIGHT};
+    XChangeProperty(display, window,
+                    XInternAtom(display, "_NET_WM_STRUT", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)strut, 4);
     XRaiseWindow(display, window);
     if (taskbar_enabled && taskbar_window != None) {
         XMapRaised(display, taskbar_window);

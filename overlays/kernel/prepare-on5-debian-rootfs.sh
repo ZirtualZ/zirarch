@@ -87,7 +87,7 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-evdev
 	xinit x11-xserver-utils x11-utils dbus dbus-x11
 	libgtk-4-dev libx11-dev libxft-dev pkg-config build-essential
-	onboard onboard-data gsettings-desktop-schemas gir1.2-atspi-2.0 \
+	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
 	ntpsec-ntpdate fake-hwclock e2fsprogs ca-certificates nano"
 
@@ -149,6 +149,10 @@ install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-packages" \
 	"$ROOT_DIR/usr/bin/fieldm-packages"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-keys" \
 	"$ROOT_DIR/usr/bin/fieldm-keys"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-kbd" \
+	"$ROOT_DIR/usr/bin/fieldm-kbd"
+install -m 644 "$PROJECT_DIR/FieldM/data/fieldm.css" \
+	"$ROOT_DIR/usr/share/fieldm/fieldm.css"
 
 install -m 755 "$KERNEL_DIR/wifi" "$ROOT_DIR/usr/bin/wifi"
 install -m 755 "$KERNEL_DIR/fbconsole/screen-console.initd" \

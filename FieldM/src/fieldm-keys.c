@@ -204,16 +204,10 @@ int main(void)
     }
     closedir(dir);
 
-    unsigned long long home_down = 0;
-    int home_pressed = 0;
     for (;;) {
         int ready = poll(polls, (nfds_t)count, 100);
         unsigned long long now = monotonic_ms();
-        if (home_pressed && home_down != 0 &&
-            now - home_down >= 1000) {
-            home_pressed = 0;
-            send_command(CMD_APPS);
-        }
+        (void)now;
         if (ready <= 0) {
             continue;
         }
@@ -251,8 +245,7 @@ int main(void)
                             send_escape();
                             send_command(CMD_BACK);
                         } else if (code == KEY_HOME) {
-                            home_down = now;
-                            home_pressed = 1;
+                            send_command(CMD_HOME);
                         } else if (code == KEY_MENU ||
                                    code == 139 /* KEY_MENU */) {
                             send_command(CMD_RECENTS);
@@ -264,13 +257,6 @@ int main(void)
                             toggle_power();
                             send_command(CMD_POWER);
                         }
-                    } else if (events[j].value == 0 && code == KEY_HOME) {
-                        if (home_pressed && home_down != 0 &&
-                            now - home_down < 1000) {
-                            send_command(CMD_HOME);
-                        }
-                        home_pressed = 0;
-                        home_down = 0;
                     }
                 }
             }

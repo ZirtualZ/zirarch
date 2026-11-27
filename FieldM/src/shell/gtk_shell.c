@@ -25,101 +25,18 @@ void shell_show_error(GtkWindow *parent, const char *message)
 
 void shell_update_styles(ShellState *state)
 {
-    static const char css[] =
-        "* { all: unset; }"
-        "window, dialog, popover, headerbar, notebook, scrolledwindow, "
-        "viewport, list, listview, row, text, textview, grid, box, overlay, "
-        "popover contents, .fieldm-menu, .desktop-surface { "
-        "background-color: #F4F1EA; background-image: none; "
-        "color: #111111; box-shadow: none; border: none; "
-        "font-family: 'DejaVu Serif'; }"
-        "window { background-color: #F4F1EA; color: #111111; }"
-        "label, text, entry, button, checkbutton, radiobutton, dropdown, "
-        "notebook tab, row, listview, textview { "
-        "background-color: #F4F1EA; background-image: none; "
-        "color: #111111; box-shadow: none; border: none; "
-        "font-family: 'DejaVu Serif'; }"
-        "button { min-height: 48px; min-width: 48px; "
-        "border: 2px solid #111111; border-radius: 4px; "
-        "padding: 8px 12px; background-image: none; "
-        "background-color: #F4F1EA; color: #111111; box-shadow: none; }"
-        "button:active, button:checked, button:focus, "
-        "row:selected, row:active, notebook tab:checked, "
-        "notebook tab:active { background-image: none; "
-        "background-color: #111111; color: #F4F1EA; "
-        "border: 2px solid #111111; box-shadow: none; }"
-        "button:active label, button:checked label, button:focus label, "
-        "row:selected label, row:active label, "
-        "notebook tab:checked label, notebook tab:active label { "
-        "background-color: #111111; color: #F4F1EA; }"
-        "entry, textview text { border: 2px solid #111111; "
-        "background-color: #F4F1EA; background-image: none; "
-        "color: #111111; box-shadow: none; border-radius: 4px; "
-        "caret-color: #111111; }"
-        "entry:focus, textview:focus { border: 2px solid #111111; "
-        "background-color: #111111; color: #F4F1EA; }"
-        "entry:focus text, textview:focus text { color: #F4F1EA; }"
-        "checkbutton check, radiobutton radio { "
-        "background: #F4F1EA; border: 2px solid #111111; "
-        "box-shadow: none; }"
-        "checkbutton:checked check, radiobutton:checked radio { "
-        "background: #111111; color: #F4F1EA; }"
-        ".desktop-shortcut { min-width: 130px; min-height: 130px; "
-        "padding: 0; border: 2px solid #111111; border-radius: 4px; "
-        "background: #F4F1EA; color: #111111; box-shadow: none; }"
-        ".desktop-shortcut label { font-size: 18px; font-weight: 700; "
-        "color: #111111; background: transparent; }"
-        ".desktop-shortcut:active, .desktop-shortcut:checked, "
-        ".desktop-shortcut:focus { background: #111111; "
-        "border: 2px solid #111111; color: #F4F1EA; box-shadow: none; }"
-        ".desktop-shortcut:active label, .desktop-shortcut:checked label, "
-        ".desktop-shortcut:focus label { color: #F4F1EA; background: transparent; }"
-        ".app-icon-badge, .app-icon-image { "
-        "background: #F4F1EA; border: none; border-radius: 4px; "
-        "box-shadow: none; }"
-        ".app-icon-letter { color: #111111; background: transparent; "
-        "font-family: 'DejaVu Sans Mono'; font-size: 28px; "
-        "font-weight: 800; }"
-        ".home-watermark { color: #111111; background: transparent; "
-        "font-size: 38px; font-weight: 800; letter-spacing: 0.16em; }"
-        ".statusbar { min-height: 48px; padding: 0 12px; "
-        "background: #F4F1EA; border-bottom: 2px solid #111111; "
-        "box-shadow: none; }"
-        ".status-clock, .status-network, .status-telemetry { "
-        "font-family: 'DejaVu Sans Mono'; color: #111111; "
-        "background: transparent; }"
-        ".status-clock { font-size: 18px; font-weight: 800; }"
-        ".status-network { font-size: 12px; }"
-        ".status-telemetry { font-size: 13px; font-weight: 700; "
-        "min-width: 390px; }"
-        ".panel { color: #111111; background: #F4F1EA; "
-        "border-bottom: 2px solid #111111; box-shadow: none; }"
-        ".muted { color: #111111; background: transparent; }"
-        ".launcher-row { min-height: 72px; background: transparent; "
-        "border: none; border-radius: 4px; }"
-        ".launcher-card { min-height: 72px; padding: 8px 12px; "
-        "background: #F4F1EA; color: #111111; "
-        "border: 2px solid #111111; border-radius: 4px; box-shadow: none; }"
-        ".launcher-card label { color: #111111; background: transparent; "
-        "font-size: 18px; }"
-        ".launcher-row:selected .launcher-card, "
-        ".launcher-row:active .launcher-card { "
-        "background: #111111; color: #F4F1EA; border: 2px solid #111111; }"
-        ".launcher-row:selected .launcher-card label, "
-        ".launcher-row:active .launcher-card label { "
-        "color: #F4F1EA; background: transparent; }"
-        ".title-1, .title-2 { color: #111111; background: transparent; "
-        "font-size: 24px; font-weight: 800; }"
-        "notebook header, notebook header tabs, notebook tab { "
-        "background: #F4F1EA; background-image: none; "
-        "border: 1px solid #111111; border-radius: 4px; "
-        "color: #111111; box-shadow: none; }"
-        "notebook tab:checked { background: #111111; color: #F4F1EA; }"
-        "notebook tab:checked label { color: #F4F1EA; }"
-        ".primary-action, .primary-action label { "
-        "background: #111111; background-image: none; "
-        "color: #F4F1EA; }";
-    gtk_css_provider_load_from_string(state->styles, css);
+    const char *paths[] = {
+        "/usr/share/fieldm/fieldm.css",
+        "/mnt/zirarch/zirarch/FieldM/data/fieldm.css",
+        NULL
+    };
+    for (int i = 0; paths[i] != NULL; ++i) {
+        if (g_file_test(paths[i], G_FILE_TEST_IS_REGULAR)) {
+            gtk_css_provider_load_from_path(state->styles, paths[i]);
+            return;
+        }
+    }
+    fprintf(stderr, "Could not find the FieldM stylesheet.\n");
 }
 
 static void settings_path(char *path, size_t size)
@@ -293,6 +210,7 @@ static void process_x_events(ShellState *state)
                    event.xclient.window == state->command_window &&
                    event.xclient.message_type == state->command_atom &&
                    event.xclient.data.l[0] == 2) {
+            if (state->recents != NULL) recents_close(state);
             if (state->launcher != NULL) {
                 launcher_close(state);
             } else if (state->settings != NULL) {
@@ -306,6 +224,12 @@ static void process_x_events(ShellState *state)
                    event.xclient.data.l[0] <= 5) {
             if (state->launcher != NULL) {
                 launcher_close(state);
+            }
+            if (event.xclient.data.l[0] == 3 && state->recents != NULL) {
+                recents_close(state);
+            }
+            if (event.xclient.data.l[0] == 4) {
+                recents_open(state);
             }
             if (state->settings != NULL) {
                 gtk_widget_set_visible(state->settings, FALSE);
@@ -400,7 +324,7 @@ static void application_activate(GtkApplication *application, gpointer data)
     icon_themes_initialize(state);
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(), GTK_STYLE_PROVIDER(state->styles),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        GTK_STYLE_PROVIDER_PRIORITY_USER);
     shell_refresh_desktop_windows(state);
     create_command_window(state);
     state->x_source = g_unix_fd_add(

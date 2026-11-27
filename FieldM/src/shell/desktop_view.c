@@ -119,33 +119,36 @@ static GtkWidget *make_panel(ShellState *state)
     gtk_widget_add_css_class(panel, "panel");
     gtk_widget_add_css_class(panel, "statusbar");
     gtk_widget_set_size_request(panel, -1, 48);
-    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_size_request(left, 220, -1);
+    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     GtkWidget *clock = gtk_label_new("00:00");
     gtk_widget_add_css_class(clock, "status-clock");
-    gtk_label_set_xalign(GTK_LABEL(clock), 0.0f);
     GtkWidget *network = gtk_label_new("Wi-Fi --");
     gtk_widget_add_css_class(network, "status-network");
-    gtk_label_set_xalign(GTK_LABEL(network), 0.0f);
     gtk_box_append(GTK_BOX(left), clock);
     gtk_box_append(GTK_BOX(left), network);
     gtk_widget_set_halign(left, GTK_ALIGN_START);
-
-    GtkWidget *telemetry = gtk_label_new("CPU -- RAM -- / -- BAT --");
-    gtk_widget_add_css_class(telemetry, "status-telemetry");
-    gtk_label_set_xalign(GTK_LABEL(telemetry), 1.0f);
-    gtk_widget_set_hexpand(telemetry, TRUE);
-    gtk_widget_set_halign(telemetry, GTK_ALIGN_END);
-
+    GtkWidget *battery = gtk_label_new("BAT --");
+    gtk_widget_add_css_class(battery, "status-battery");
+    GtkWidget *keyboard = gtk_button_new_with_label("kbd");
+    gtk_widget_add_css_class(keyboard, "keyboard-toggle");
+    g_signal_connect(keyboard, "clicked", G_CALLBACK(shortcut_clicked), state);
+    g_object_set_data(G_OBJECT(keyboard), "action",
+                      GINT_TO_POINTER(SHELL_ACTION_KEYBOARD));
+    gtk_widget_set_halign(keyboard, GTK_ALIGN_END);
     gtk_box_append(GTK_BOX(panel), left);
-    gtk_box_append(GTK_BOX(panel), telemetry);
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(right, GTK_ALIGN_END);
+    gtk_widget_set_hexpand(right, TRUE);
+    gtk_box_append(GTK_BOX(right), battery);
+    gtk_box_append(GTK_BOX(right), keyboard);
+    gtk_box_append(GTK_BOX(panel), right);
     g_object_set_data(G_OBJECT(panel), "status-clock", clock);
     g_object_set_data(G_OBJECT(panel), "status-network", network);
-    g_object_set_data(G_OBJECT(panel), "status-telemetry", telemetry);
+    g_object_set_data(G_OBJECT(panel), "status-battery", battery);
     g_object_set_data(G_OBJECT(panel), "fieldm-status-panel", panel);
     state->status_clock = clock;
     state->status_network = network;
-    state->status_telemetry = telemetry;
+    state->status_telemetry = battery;
     return panel;
 }
 
@@ -321,30 +324,14 @@ static gboolean status_refresh(gpointer data)
     }
     g_free(time_text);
 
-    int cpu = status_cpu_sample(state);
-    int ram = status_ram_percent();
-    int disk = status_disk_percent();
     char battery_mark[8] = "";
     int battery = status_battery(battery_mark, sizeof(battery_mark));
-    char telemetry[96];
-    char cpu_text[16], ram_text[16], disk_text[16], battery_text[16];
-    g_snprintf(cpu_text, sizeof(cpu_text),
-               cpu >= 0 ? "%d%%" : "--", cpu);
-    g_snprintf(ram_text, sizeof(ram_text),
-               ram >= 0 ? "%d%%" : "--", ram);
-    g_snprintf(disk_text, sizeof(disk_text),
-               disk >= 0 ? "%d%%" : "--", disk);
+    char battery_text[32];
     g_snprintf(battery_text, sizeof(battery_text),
-               battery >= 0 ? "%d%%" : "--", battery);
-    if (battery < 0) {
-        g_snprintf(battery_text, sizeof(battery_text), "--");
-    }
-    g_snprintf(telemetry, sizeof(telemetry),
-               "CPU %s RAM %s / %s BAT %s%s",
-               cpu_text, ram_text, disk_text, battery_text,
-               battery_mark[0] != '\0' ? " *" : "");
+               battery >= 0 ? "BAT %d%%%s" : "BAT --",
+               battery, battery_mark[0] != '\0' ? "*" : "");
     if (state->status_telemetry != NULL) {
-        gtk_label_set_text(GTK_LABEL(state->status_telemetry), telemetry);
+        gtk_label_set_text(GTK_LABEL(state->status_telemetry), battery_text);
     }
 
     if (state->status_wifi_process == NULL) {
@@ -377,6 +364,225 @@ static GtkWidget *make_legacy_settings_button(ShellState *state)
     return settings;
 }
 */
+
+static void home_search_entered(GtkEventControllerFocus *controller,
+                                gpointer data)
+{
+    (void)controller;
+    (void)data;
+    shell_keyboard_command("entry", "on");
+}
+
+static int app_is_pinned(const Application *app)
+{
+    const char *name = app->name;
+    return !g_ascii_strcasecmp(name, "Terminal") ||
+           !g_ascii_strcasecmp(name, "Files") ||
+           !g_ascii_strcasecmp(name, "Browser") ||
+           !g_ascii_strcasecmp(name, "Settings") ||
+           !g_ascii_strcasecmp(name, "Packages");
+}
+
+static void home_app_clicked(GtkButton *button, gpointer data)
+{
+    ShellState *state = data;
+    guint index = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button),
+                                                     "application-index"));
+    if (index < state->application_count) {
+        application_launch_with_catalog(&state->applications[index],
+                                        state->applications,
+                                        state->application_count);
+    }
+}
+
+static void render_home_grid(ShellState *state, const char *query)
+{
+    if (state->home_grid == NULL) {
+        return;
+    }
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(state->home_grid)) != NULL) {
+        gtk_grid_remove(GTK_GRID(state->home_grid), child);
+    }
+    guint shown = 0;
+    for (int pass = 0; pass < 2 && shown < state->application_count; ++pass) {
+        for (size_t i = 0; i < state->application_count; ++i) {
+            Application *app = &state->applications[i];
+            if ((pass == 0) != app_is_pinned(app)) {
+                continue;
+            }
+            if (query != NULL && query[0] != '\0' &&
+                !application_matches(app, query)) {
+                continue;
+            }
+            GtkWidget *button = gtk_button_new();
+            gtk_widget_add_css_class(button, "app-grid-button");
+            gtk_widget_set_size_request(button, 190, 180);
+            GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+            GtkWidget *badge = shell_make_icon_badge(app->name, app->icon);
+            GtkWidget *label = gtk_label_new(app->name);
+            gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+            gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+            gtk_box_append(GTK_BOX(content), badge);
+            gtk_box_append(GTK_BOX(content), label);
+            gtk_button_set_child(GTK_BUTTON(button), content);
+            g_object_set_data(G_OBJECT(button), "application-index",
+                              GUINT_TO_POINTER((guint)i));
+            g_signal_connect(button, "clicked",
+                             G_CALLBACK(home_app_clicked), state);
+            gtk_grid_attach(GTK_GRID(state->home_grid), button,
+                            (int)(shown % 3), (int)(shown / 3), 1, 1);
+            ++shown;
+        }
+    }
+}
+
+static void home_search_changed(GtkEditable *editable, gpointer data)
+{
+    render_home_grid(data, gtk_editable_get_text(editable));
+}
+
+static void recents_close_one(GtkButton *button, gpointer data)
+{
+    (void)button;
+    Window window = (Window)GPOINTER_TO_UINT(data);
+    GdkDisplay *gdk_display = gdk_display_get_default();
+    Display *display = gdk_x11_display_get_xdisplay(GDK_X11_DISPLAY(gdk_display));
+    Atom delete = XInternAtom(display,
+                              "WM_DELETE_WINDOW", False);
+    XEvent event;
+    memset(&event, 0, sizeof(event));
+    event.type = ClientMessage;
+    event.xclient.window = window;
+    event.xclient.message_type = XInternAtom(display,
+                                             "WM_PROTOCOLS", False);
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = delete;
+    event.xclient.data.l[1] = CurrentTime;
+    XSendEvent(display, window, False, NoEventMask,
+               &event);
+    XFlush(display);
+}
+
+static void recents_switch(GtkListBox *list, GtkListBoxRow *row, gpointer data)
+{
+    (void)list;
+    ShellState *state = data;
+    if (row == NULL) return;
+    Window window = (Window)GPOINTER_TO_UINT(
+        g_object_get_data(G_OBJECT(row), "x-window"));
+    if (window != None) {
+        XRaiseWindow(state->xdisplay, window);
+        XSetInputFocus(state->xdisplay, window, RevertToPointerRoot, CurrentTime);
+        XFlush(state->xdisplay);
+    }
+    recents_close(state);
+}
+
+void recents_close(ShellState *state)
+{
+    if (state->recents != NULL) {
+        gtk_widget_set_visible(state->recents, FALSE);
+    }
+}
+
+static void recents_close_all(GtkButton *button, gpointer data)
+{
+    ShellState *state = data;
+    GtkWidget *list = g_object_get_data(G_OBJECT(button), "recents-list");
+    if (list == NULL) return;
+    for (GtkWidget *row = gtk_widget_get_first_child(list); row != NULL;
+         row = gtk_widget_get_next_sibling(row)) {
+        Window window = (Window)GPOINTER_TO_UINT(
+            g_object_get_data(G_OBJECT(row), "x-window"));
+        recents_close_one(NULL, GUINT_TO_POINTER((guint)window));
+    }
+    (void)state;
+}
+
+void recents_open(ShellState *state)
+{
+    GtkWidget *list = NULL;
+    if (state->recents == NULL) {
+        GtkWidget *window = gtk_application_window_new(state->application);
+        state->recents = window;
+        gtk_window_set_title(GTK_WINDOW(window), "Open apps");
+        gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
+        gtk_window_set_default_size(GTK_WINDOW(window),
+                                    state->screen.width,
+                                    state->screen.height);
+        GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_widget_add_css_class(root, "recents-screen");
+        gtk_widget_set_margin_start(root, 12);
+        gtk_widget_set_margin_end(root, 12);
+        gtk_widget_set_margin_top(root, 12);
+        gtk_widget_set_margin_bottom(root, 12);
+        GtkWidget *heading = gtk_label_new("Open apps");
+        gtk_widget_add_css_class(heading, "title-2");
+        gtk_box_append(GTK_BOX(root), heading);
+        GtkWidget *scroll = gtk_scrolled_window_new();
+        gtk_widget_set_vexpand(scroll, TRUE);
+        list = gtk_list_box_new();
+        gtk_widget_set_name(list, "recents-list");
+        gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
+        gtk_box_append(GTK_BOX(root), scroll);
+        GtkWidget *close_all = gtk_button_new_with_label("Close all");
+        gtk_widget_set_size_request(close_all, -1, 64);
+        g_object_set_data(G_OBJECT(close_all), "recents-list", list);
+        g_signal_connect(close_all, "clicked",
+                         G_CALLBACK(recents_close_all), state);
+        gtk_box_append(GTK_BOX(root), close_all);
+        gtk_window_set_child(GTK_WINDOW(window), root);
+        g_signal_connect(list, "row-activated",
+                         G_CALLBACK(recents_switch), state);
+        g_object_set_data(G_OBJECT(window), "recents-list", list);
+    } else {
+        list = g_object_get_data(G_OBJECT(state->recents), "recents-list");
+    }
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(list)) != NULL) {
+        gtk_list_box_remove(GTK_LIST_BOX(list), child);
+    }
+    Window root_return, parent_return, *children = NULL;
+    unsigned int count = 0;
+    XQueryTree(state->xdisplay, DefaultRootWindow(state->xdisplay),
+               &root_return, &parent_return, &children, &count);
+    for (unsigned int i = 0; i < count; ++i) {
+        Window window = children[i];
+        XWindowAttributes attrs;
+        if (!XGetWindowAttributes(state->xdisplay, window, &attrs) ||
+            attrs.map_state == IsUnmapped) continue;
+        char *name = NULL;
+        XFetchName(state->xdisplay, window, &name);
+        if (name == NULL) continue;
+        if (strstr(name, "fieldm-kbd") != NULL ||
+            strstr(name, "simple-desktop") != NULL ||
+            strstr(name, "ZIRARCH") != NULL) {
+            XFree(name);
+            continue;
+        }
+        GtkWidget *row = gtk_list_box_row_new();
+        gtk_widget_add_css_class(row, "recents-row");
+        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *label = gtk_label_new(name);
+        gtk_widget_set_hexpand(label, TRUE);
+        GtkWidget *close = gtk_button_new_with_label("X");
+        gtk_widget_set_size_request(close, 64, 64);
+        g_object_set_data(G_OBJECT(close), "x-window",
+                          GUINT_TO_POINTER((guint)window));
+        g_signal_connect(close, "clicked",
+                         G_CALLBACK(recents_close_one), GUINT_TO_POINTER(window));
+        gtk_box_append(GTK_BOX(box), label);
+        gtk_box_append(GTK_BOX(box), close);
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+        g_object_set_data(G_OBJECT(row), "x-window",
+                          GUINT_TO_POINTER((guint)window));
+        gtk_list_box_append(GTK_LIST_BOX(list), row);
+        XFree(name);
+    }
+    if (children != NULL) XFree(children);
+    gtk_window_present(GTK_WINDOW(state->recents));
+}
 
 static int set_desktop_window_type(ShellState *state, GtkWidget *window)
 {
@@ -419,38 +625,18 @@ static int set_desktop_window_type(ShellState *state, GtkWidget *window)
 
 static GtkWidget *make_desktop_window(ShellState *state)
 {
-    static const struct {
-        const char *label;
-        const char *icon;
-        int action;
-    } shortcuts[] = {
-        {"Terminal", "utilities-terminal-symbolic", SHELL_ACTION_TERMINAL},
-        {"Files", "folder-symbolic", SHELL_ACTION_FILES},
-        {"Browser", "web-browser-symbolic", SHELL_ACTION_BROWSER},
-        {"Settings", "preferences-system-symbolic", SHELL_ACTION_SETTINGS},
-        {"Packages", "system-software-install-symbolic", SHELL_ACTION_PACKAGES}
-    };
-
     GtkWidget *window = gtk_application_window_new(state->application);
-    gtk_window_set_title(GTK_WINDOW(window), "Field Desktop");
+    gtk_window_set_title(GTK_WINDOW(window), "ZIRARCH");
     gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_default_size(GTK_WINDOW(window),
                                 state->screen.width,
                                 state->screen.height);
 
-    GtkWidget *overlay = gtk_overlay_new();
     GtkWidget *surface = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(surface, "home-screen");
     gtk_widget_add_css_class(surface, "desktop-surface");
-    GtkWidget *wallpaper = gtk_picture_new();
-    gtk_picture_set_can_shrink(GTK_PICTURE(wallpaper), TRUE);
-    gtk_picture_set_content_fit(GTK_PICTURE(wallpaper), GTK_CONTENT_FIT_COVER);
-    gtk_widget_set_hexpand(wallpaper, TRUE);
-    gtk_widget_set_vexpand(wallpaper, TRUE);
-    gtk_overlay_set_child(GTK_OVERLAY(overlay), wallpaper);
-    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), surface);
-    gtk_window_set_child(GTK_WINDOW(window), overlay);
-    state->wallpaper_picture = wallpaper;
+    gtk_window_set_child(GTK_WINDOW(window), surface);
 
     GtkEventController *keys = gtk_event_controller_key_new();
     gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
@@ -470,11 +656,11 @@ static GtkWidget *make_desktop_window(ShellState *state)
         state->status_panel = NULL;
     }
 
-    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 36);
-    gtk_widget_set_margin_start(body, 50);
-    gtk_widget_set_margin_top(body, 40);
-    gtk_widget_set_margin_end(body, 50);
-    gtk_widget_set_margin_bottom(body, 24);
+    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_widget_set_margin_start(body, 20);
+    gtk_widget_set_margin_top(body, 18);
+    gtk_widget_set_margin_end(body, 20);
+    gtk_widget_set_margin_bottom(body, 12);
     gtk_widget_set_vexpand(body, TRUE);
     gtk_box_append(GTK_BOX(surface), body);
 
@@ -484,17 +670,28 @@ static GtkWidget *make_desktop_window(ShellState *state)
     gtk_widget_set_margin_bottom(watermark, 8);
     gtk_box_append(GTK_BOX(body), watermark);
 
+    state->home_search = gtk_search_entry_new();
+    gtk_search_entry_set_placeholder_text(
+        GTK_SEARCH_ENTRY(state->home_search), "Search apps");
+    GtkEventController *entry_focus = gtk_event_controller_focus_new();
+    g_signal_connect(entry_focus, "enter",
+                     G_CALLBACK(home_search_entered), state);
+    gtk_widget_add_controller(state->home_search, entry_focus);
+    g_signal_connect(state->home_search, "search-changed",
+                     G_CALLBACK(home_search_changed), state);
+    gtk_box_append(GTK_BOX(body), state->home_search);
+
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scroll, TRUE);
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 40);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 50);
-    gtk_widget_set_halign(grid, GTK_ALIGN_CENTER);
-    for (int i = 0; i < (int)(sizeof(shortcuts) / sizeof(shortcuts[0])); ++i) {
-        GtkWidget *button = make_shortcut(state, shortcuts[i].action,
-                                          shortcuts[i].label,
-                                          shortcuts[i].icon);
-        add_grid_button(GTK_GRID(grid), button, i, 3);
-    }
-    gtk_box_append(GTK_BOX(body), grid);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_widget_set_halign(grid, GTK_ALIGN_FILL);
+    gtk_widget_set_hexpand(grid, TRUE);
+    state->home_grid = grid;
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), grid);
+    gtk_box_append(GTK_BOX(body), scroll);
+    render_home_grid(state, "");
 
     if (!set_desktop_window_type(state, window)) {
         gtk_window_destroy(GTK_WINDOW(window));

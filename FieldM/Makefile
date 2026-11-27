@@ -13,7 +13,7 @@ DESTDIR ?=
 
 .PHONY: all clean install check-gtk check-applications
 
-all: simple-desktop simple-wm fieldm-packages fieldm-keys
+all: simple-desktop simple-wm fieldm-packages fieldm-keys fieldm-kbd
 
 DESKTOP_SOURCES = src/desktop.c src/applications.c \
 	src/appearance.c src/screen_layout.c src/shell/session.c \
@@ -55,15 +55,21 @@ fieldm-packages: src/packages.c
 fieldm-keys: src/fieldm-keys.c
 	$(CC) $(CFLAGS) -std=c11 -o $@ src/fieldm-keys.c $(LDLIBS)
 
+fieldm-kbd: src/fieldm-kbd.c src/theme.h
+	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ src/fieldm-kbd.c \
+		$(LDLIBS) $(XFT_LIBS)
+
 install: all
 	install -Dm755 simple-desktop "$(DESTDIR)$(BINDIR)/simple-desktop"
 	install -Dm755 simple-wm "$(DESTDIR)$(BINDIR)/simple-wm"
 	install -Dm755 fieldm-packages "$(DESTDIR)$(BINDIR)/fieldm-packages"
 	install -Dm755 fieldm-keys "$(DESTDIR)$(BINDIR)/fieldm-keys"
+	install -Dm755 fieldm-kbd "$(DESTDIR)$(BINDIR)/fieldm-kbd"
+	install -Dm644 data/fieldm.css "$(DESTDIR)/usr/share/fieldm/fieldm.css"
 	install -Dm644 data/field-desktop.desktop \
 		"$(DESTDIR)$(XSESSIONDIR)/field-desktop.desktop"
 	install -Dm644 data/packages.desktop \
 		"$(DESTDIR)/usr/share/applications/packages.desktop"
 
 clean:
-	rm -f simple-desktop simple-wm fieldm-packages fieldm-keys
+	rm -f simple-desktop simple-wm fieldm-packages fieldm-keys fieldm-kbd
