@@ -170,6 +170,8 @@ chmod 755 "$ROOT_DIR/etc/init.d/wifi-link"
 
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-boot-mode"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-keys.initd" \
+	"$ROOT_DIR/etc/init.d/fieldm-keys"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode" \
 	"$ROOT_DIR/usr/bin/zirarch-boot-mode"
 install -m 755 "$PROJECT_DIR/builds/zirarch-x11-refresh" \
@@ -305,8 +307,8 @@ for service in bootmisc hostname hwclock localmount modules root sysctl urandom;
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		ln -sfn "/etc/init.d/$service" "$ROOT_DIR/etc/runlevels/boot/$service"
 done
-for service in loopback wifi-link wpa_supplicant zirarch-boot-mode \
-	networking local; do
+for service in loopback wifi-link wpa_supplicant fieldm-keys \
+	zirarch-boot-mode networking local; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		ln -sfn "/etc/init.d/$service" "$ROOT_DIR/etc/runlevels/default/$service"
 done

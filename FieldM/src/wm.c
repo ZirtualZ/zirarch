@@ -10,10 +10,12 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "theme.h"
@@ -46,9 +48,15 @@ typedef struct {
     int dialog;
 } ManagedWindow;
 
+typedef struct {
+    Window client;
+    unsigned long long deadline;
+} PendingClose;
+
 static Display *display;
 static Window root;
 static ManagedWindow clients[MAX_CLIENTS];
+static PendingClose pending_closes[MAX_CLIENTS];
 static int client_count;
 static int focused = -1;
 static unsigned long frame_color;
@@ -80,6 +88,26 @@ static void draw_taskbar(void);
 static void sync_taskbars(void);
 static void arrange_client(int index);
 static void maximize_client(int index, int fullscreen);
+
+static int title_height(const ManagedWindow *managed)
+{
+    return managed->fullscreen ? 0 : TITLE_HEIGHT;
+}
+
+static int border_width(const ManagedWindow *managed)
+{
+    return managed->fullscreen ? 0 : RESIZE_BORDER;
+}
+
+static unsigned long long monotonic_ms(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return 0;
+    }
+    return (unsigned long long)now.tv_sec * 1000ULL +
+           (unsigned long long)now.tv_nsec / 1000000ULL;
+}
 
 static void update_frame_title(int index)
 {
@@ -466,63 +494,97 @@ static int is_desktop_surface(Window window)
     return is_desktop;
 }
 
+static int client_has_state(Window client, const char *state_name)
+{
+    Atom state_atom = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom state = XInternAtom(display, state_name, False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long item_count;
+    unsigned long bytes_after;
+    unsigned char *value = NULL;
+    int found = 0;
+    if (XGetWindowProperty(display, client, state_atom, 0, 32, False, XA_ATOM,
+                           &actual_type, &actual_format, &item_count,
+                           &bytes_after, &value) == Success &&
+        value != NULL && actual_type == XA_ATOM && actual_format == 32) {
+        Atom *states = (Atom *)value;
+        for (unsigned long i = 0; i < item_count; ++i) {
+            if (states[i] == state) {
+                found = 1;
+                break;
+            }
+        }
+    }
+    if (value != NULL) {
+        XFree(value);
+    }
+    return found;
+}
+
 static void draw_frame(int index)
 {
     ManagedWindow *managed = &clients[index];
+    int title = title_height(managed);
+    int border = border_width(managed);
     XSetForeground(display, gc, frame_color);
     XFillRectangle(display, managed->frame, gc, 0, 0,
-                   (unsigned int)(managed->width + RESIZE_BORDER),
-                   (unsigned int)(managed->height + TITLE_HEIGHT +
-                                  RESIZE_BORDER));
-    XSetForeground(display, gc,
-                   index == focused ? active_color : panel_color);
-    XFillRectangle(display, managed->frame, gc, 0, 0,
-                   (unsigned int)(managed->width + RESIZE_BORDER),
-                   TITLE_HEIGHT);
+                   (unsigned int)(managed->width + border),
+                   (unsigned int)(managed->height + title + border));
+    if (title > 0) {
+        XSetForeground(display, gc,
+                       index == focused ? active_color : panel_color);
+        XFillRectangle(display, managed->frame, gc, 0, 0,
+                       (unsigned int)(managed->width + border),
+                       (unsigned int)title);
 
-    char *name = NULL;
-    if (!XFetchName(display, managed->client, &name) || name == NULL) {
-        name = strdup("Application");
-    }
-    if (name != NULL) {
-        XSetForeground(display, gc, accent_xft.pixel);
-        XFillArc(display, managed->frame, gc, 18, 20, 24, 24, 0, 360 * 64);
-        draw_text(managed->frame, name, 54, 41, &text_xft,
-                  managed->width - 130);
-        XFree(name);
-    }
+        char *name = NULL;
+        if (!XFetchName(display, managed->client, &name) || name == NULL) {
+            name = strdup("Application");
+        }
+        if (name != NULL) {
+            XSetForeground(display, gc, accent_xft.pixel);
+            XFillArc(display, managed->frame, gc, 18, 20, 24, 24, 0, 360 * 64);
+            draw_text(managed->frame, name, 54, 41, &text_xft,
+                      managed->width - 130);
+            XFree(name);
+        }
 
-    draw_round_rect(managed->frame, managed->width - 64, 0, 64, 64, 4,
-                    index == focused ? close_color : button_color);
-    if (managed->terminal) {
-        draw_round_rect(managed->frame, managed->width - 128, 0, 64, 64, 4,
-                        index == focused ? accent_xft.pixel : button_color);
-        draw_text(managed->frame, "< >", managed->width - 118, 43,
-                  &text_xft, 48);
+        draw_round_rect(managed->frame, managed->width - 64, 0, 64, 64, 4,
+                        index == focused ? close_color : button_color);
+        if (managed->terminal) {
+            draw_round_rect(managed->frame, managed->width - 128, 0, 64, 64, 4,
+                            index == focused ? accent_xft.pixel : button_color);
+            draw_text(managed->frame, "< >", managed->width - 118, 43,
+                      &text_xft, 48);
+        }
+        XSetForeground(display, gc, text_xft.pixel);
+        XDrawLine(display, managed->frame, gc, managed->width - 48, 16,
+                  managed->width - 16, 48);
+        XDrawLine(display, managed->frame, gc, managed->width - 16, 16,
+                  managed->width - 48, 48);
+        XSetForeground(display, gc, outline_color);
+        XDrawLine(display, managed->frame, gc, 0, title - 1,
+                  managed->width + border, title - 1);
     }
-    XSetForeground(display, gc, text_xft.pixel);
-    XDrawLine(display, managed->frame, gc, managed->width - 48, 16,
-              managed->width - 16, 48);
-    XDrawLine(display, managed->frame, gc, managed->width - 16, 16,
-              managed->width - 48, 48);
-    XSetForeground(display, gc, outline_color);
-    XDrawLine(display, managed->frame, gc, 0, TITLE_HEIGHT - 1,
-              managed->width + RESIZE_BORDER, TITLE_HEIGHT - 1);
-    XSetForeground(display, gc, index == focused ? active_color : panel_color);
-    XFillRectangle(display, managed->frame, gc, managed->width, TITLE_HEIGHT,
-                   RESIZE_BORDER,
-                   (unsigned int)(managed->height + RESIZE_BORDER));
-    XFillRectangle(display, managed->frame, gc, 0,
-                   TITLE_HEIGHT + managed->height,
-                   (unsigned int)(managed->width + RESIZE_BORDER),
-                   RESIZE_BORDER);
-    XSetForeground(display, gc, muted_xft.pixel);
-    for (int offset = 3; offset <= 7; offset += 2) {
-        XDrawLine(display, managed->frame, gc,
-                  managed->width + RESIZE_BORDER - offset,
-                  TITLE_HEIGHT + managed->height + RESIZE_BORDER - 1,
-                  managed->width + RESIZE_BORDER - 1,
-                  TITLE_HEIGHT + managed->height + RESIZE_BORDER - offset);
+    if (border > 0) {
+        XSetForeground(display, gc,
+                       index == focused ? active_color : panel_color);
+        XFillRectangle(display, managed->frame, gc, managed->width, title,
+                       (unsigned int)border,
+                       (unsigned int)(managed->height + border));
+        XFillRectangle(display, managed->frame, gc, 0,
+                       title + managed->height,
+                       (unsigned int)(managed->width + border),
+                       (unsigned int)border);
+        XSetForeground(display, gc, muted_xft.pixel);
+        for (int offset = 3; offset <= 7; offset += 2) {
+            XDrawLine(display, managed->frame, gc,
+                      managed->width + border - offset,
+                      title + managed->height + border - 1,
+                      managed->width + border - 1,
+                      title + managed->height + border - offset);
+        }
     }
 }
 
@@ -536,13 +598,10 @@ static void focus_client(int index)
         draw_frame(previous);
     }
     focused = index;
-    if (previous != index && previous >= 0 &&
-        previous < client_count && !clients[previous].fullscreen) {
+    if (previous != index && previous >= 0 && previous < client_count) {
         maximize_client(previous, clients[previous].fullscreen);
     }
-    if (!clients[index].fullscreen) {
-        maximize_client(index, 0);
-    }
+    maximize_client(index, clients[index].fullscreen);
     XRaiseWindow(display, clients[index].frame);
     XSetInputFocus(display, clients[index].client, RevertToPointerRoot,
                    CurrentTime);
@@ -564,6 +623,8 @@ static void maximize_client(int index, int fullscreen)
     }
     ManagedWindow *managed = &clients[index];
     managed->fullscreen = fullscreen;
+    int title = title_height(managed);
+    int border = border_width(managed);
     if (managed->dialog && !fullscreen) {
         int max_width = screen_layout.width - 32;
         int max_height = screen_layout.height - 32 -
@@ -587,9 +648,9 @@ static void maximize_client(int index, int fullscreen)
                     (unsigned char *)states, fullscreen ? 3 : 2);
     managed->x = screen_layout.x;
     managed->y = screen_layout.y;
-    managed->width = screen_layout.width - RESIZE_BORDER;
-    managed->height = screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER -
-        (keyboard_window != None && focused == index && !fullscreen
+    managed->width = screen_layout.width - border;
+    managed->height = screen_layout.height - title - border -
+        (keyboard_window != None && focused == index
              ? keyboard_height : 0);
     arrange_client(index);
     if (taskbar_window != None) {
@@ -605,11 +666,12 @@ static void maximize_client(int index, int fullscreen)
 static void arrange_client(int index)
 {
     ManagedWindow *managed = &clients[index];
+    int title = title_height(managed);
+    int border = border_width(managed);
     XMoveResizeWindow(display, managed->frame, managed->x, managed->y,
-                      (unsigned int)(managed->width + RESIZE_BORDER),
-                      (unsigned int)(managed->height + TITLE_HEIGHT +
-                                     RESIZE_BORDER));
-    XMoveResizeWindow(display, managed->client, 0, TITLE_HEIGHT,
+                      (unsigned int)(managed->width + border),
+                      (unsigned int)(managed->height + title + border));
+    XMoveResizeWindow(display, managed->client, 0, title,
                       (unsigned int)managed->width,
                       (unsigned int)managed->height);
     draw_frame(index);
@@ -646,16 +708,19 @@ static void manage_window(Window client)
     ManagedWindow *managed = &clients[index];
     managed->client = client;
     managed->terminal = 0;
+    managed->fullscreen = client_has_state(
+        client, "_NET_WM_STATE_FULLSCREEN");
     Window transient_for = None;
     managed->dialog = XGetTransientForHint(display, client, &transient_for) &&
                       transient_for != None;
     managed->x = screen_layout.x;
     managed->y = screen_layout.y;
     managed->width = managed->dialog && attributes.width > 0
-        ? attributes.width : screen_layout.width - RESIZE_BORDER;
+        ? attributes.width : screen_layout.width - border_width(managed);
     managed->height = managed->dialog && attributes.height > 0
         ? attributes.height
-        : screen_layout.height - TITLE_HEIGHT - RESIZE_BORDER;
+        : screen_layout.height - title_height(managed) -
+              border_width(managed);
     if (managed->dialog) {
         int max_width = screen_layout.width - 32;
         int max_height = screen_layout.height - 32;
@@ -671,14 +736,16 @@ static void manage_window(Window client)
         managed->height = MIN_HEIGHT;
     }
 
+    int title = title_height(managed);
+    int border = border_width(managed);
     XSetWindowAttributes frame_attributes;
     frame_attributes.override_redirect = True;
     frame_attributes.background_pixel = frame_color;
     frame_attributes.event_mask = ExposureMask | ButtonPressMask;
     managed->frame = XCreateWindow(display, root, managed->x, managed->y,
-                                   (unsigned int)(managed->width + RESIZE_BORDER),
-                                   (unsigned int)(managed->height + TITLE_HEIGHT +
-                                                  RESIZE_BORDER),
+                                   (unsigned int)(managed->width + border),
+                                   (unsigned int)(managed->height + title +
+                                                  border),
                                    1, CopyFromParent, InputOutput, CopyFromParent,
                                    CWOverrideRedirect | CWBackPixel | CWEventMask,
                                    &frame_attributes);
@@ -689,11 +756,11 @@ static void manage_window(Window client)
                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
                 GrabModeSync, GrabModeAsync, None, None);
     XSetWindowBorderWidth(display, client, 0);
-    XReparentWindow(display, client, managed->frame, 0, TITLE_HEIGHT);
+    XReparentWindow(display, client, managed->frame, 0, title);
     update_frame_title(index);
     XMapWindow(display, client);
     XMapWindow(display, managed->frame);
-    maximize_client(index, 0);
+    maximize_client(index, managed->fullscreen);
     sync_terminal_state(index);
     focus_client(index);
     draw_taskbar();
@@ -746,40 +813,113 @@ static void unmanage_client(int index)
     forget_client(index);
 }
 
-static void close_focused(void)
+static void cancel_pending_close(Window client)
 {
-    if (focused < 0 || focused >= client_count) {
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (pending_closes[i].client == client) {
+            pending_closes[i].client = None;
+            pending_closes[i].deadline = 0;
+        }
+    }
+}
+
+static void schedule_pending_close(Window client)
+{
+    int available = -1;
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (pending_closes[i].client == client) {
+            available = i;
+            break;
+        }
+        if (available < 0 && pending_closes[i].client == None) {
+            available = i;
+        }
+    }
+    if (available < 0) {
+        XKillClient(display, client);
         return;
     }
+    pending_closes[available].client = client;
+    pending_closes[available].deadline = monotonic_ms() + 3000;
+}
+
+static int pending_close_timeout(void)
+{
+    unsigned long long now = monotonic_ms();
+    unsigned long long earliest = 0;
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (pending_closes[i].client == None) continue;
+        if (earliest == 0 || pending_closes[i].deadline < earliest) {
+            earliest = pending_closes[i].deadline;
+        }
+    }
+    if (earliest == 0) return -1;
+    if (earliest <= now) return 0;
+    unsigned long long remaining = earliest - now;
+    return remaining > 2147483ULL ? 2147483 : (int)remaining;
+}
+
+static void expire_pending_closes(void)
+{
+    unsigned long long now = monotonic_ms();
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (pending_closes[i].client == None ||
+            pending_closes[i].deadline > now) {
+            continue;
+        }
+        Window client = pending_closes[i].client;
+        pending_closes[i].client = None;
+        pending_closes[i].deadline = 0;
+        int index = find_client(client);
+        XWindowAttributes attributes;
+        if (index >= 0 && clients[index].client == client &&
+            XGetWindowAttributes(display, client, &attributes)) {
+            fprintf(stderr, "simple-wm: WM_DELETE_WINDOW timed out; killing client 0x%lx\n",
+                    client);
+            XKillClient(display, client);
+        }
+    }
+}
+
+static void close_client(int index)
+{
+    if (index < 0 || index >= client_count) return;
 
     Atom protocols = XInternAtom(display, "WM_PROTOCOLS", False);
     Atom delete_window = XInternAtom(display, "WM_DELETE_WINDOW", False);
     Atom *supported = NULL;
     int count = 0;
-    int supports_delete = XGetWMProtocols(display, clients[focused].client,
+    Window client = clients[index].client;
+    int supports_delete = XGetWMProtocols(display, client,
                                           &supported, &count);
     for (int i = 0; supports_delete && i < count; ++i) {
         if (supported[i] == delete_window) {
             XEvent message;
             memset(&message, 0, sizeof(message));
             message.xclient.type = ClientMessage;
-            message.xclient.window = clients[focused].client;
+            message.xclient.window = client;
             message.xclient.message_type = protocols;
             message.xclient.format = 32;
             message.xclient.data.l[0] = (long)delete_window;
             message.xclient.data.l[1] = CurrentTime;
-            XSendEvent(display, clients[focused].client, False, NoEventMask,
-                       &message);
+            XSendEvent(display, client, False, NoEventMask, &message);
             if (supported != NULL) {
                 XFree(supported);
             }
+            XFlush(display);
+            schedule_pending_close(client);
             return;
         }
     }
     if (supported != NULL) {
         XFree(supported);
     }
-    XKillClient(display, clients[focused].client);
+    XKillClient(display, client);
+}
+
+static void close_focused(void)
+{
+    close_client(focused);
 }
 
 static void draw_taskbar_monitor(void)
@@ -908,12 +1048,13 @@ static void relayout_for_screen_size(void)
             arrange_client(i);
             continue;
         }
-        int max_width = screen_layout.width - RESIZE_BORDER;
+        int max_width = screen_layout.width - border_width(managed);
         int available_height = screen_layout.height;
-        if (keyboard_window != None && !managed->fullscreen && focused == i) {
+        if (keyboard_window != None && focused == i) {
             available_height -= keyboard_height;
         }
-        int max_height = available_height - TITLE_HEIGHT - RESIZE_BORDER;
+        int max_height = available_height - title_height(managed) -
+                         border_width(managed);
         if (max_width >= MIN_WIDTH && managed->width > max_width) {
             managed->width = max_width;
         }
@@ -921,9 +1062,9 @@ static void relayout_for_screen_size(void)
             managed->height = max_height;
         }
         int max_x = screen_layout.x + screen_layout.width - managed->width -
-                    RESIZE_BORDER;
+                    border_width(managed);
         int max_y = screen_layout.y + available_height - managed->height -
-                    TITLE_HEIGHT - RESIZE_BORDER;
+                    title_height(managed) - border_width(managed);
         if (managed->x > max_x) {
             managed->x = max_x > screen_layout.x ? max_x : screen_layout.x;
         }
@@ -1159,6 +1300,20 @@ int main(int argc, char **argv)
     int origin_height = 0;
 
     for (;;) {
+        if (XPending(display) == 0) {
+            struct pollfd connection = {
+                ConnectionNumber(display), POLLIN, 0
+            };
+            int ready = poll(&connection, 1, pending_close_timeout());
+            if (ready < 0 && errno != EINTR) {
+                fprintf(stderr, "simple-wm: X11 poll failed: %s\n",
+                        strerror(errno));
+            }
+        }
+        expire_pending_closes();
+        if (XPending(display) == 0) {
+            continue;
+        }
         XNextEvent(display, &event);
         if (event.type == ConfigureNotify &&
             event.xconfigure.window == root) {
@@ -1238,6 +1393,23 @@ int main(int argc, char **argv)
                 }
                 continue;
             }
+            Atom active_window_atom =
+                XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+            int active_index = find_client(event.xclient.window);
+            if (event.xclient.message_type == active_window_atom &&
+                event.xclient.format == 32 && active_index >= 0) {
+                focus_client(active_index);
+                continue;
+            }
+            Atom close_window_atom =
+                XInternAtom(display, "_NET_CLOSE_WINDOW", False);
+            int close_index = find_client(event.xclient.window);
+            if (event.xclient.message_type == close_window_atom &&
+                event.xclient.format == 32 && close_index >= 0 &&
+                clients[close_index].client == event.xclient.window) {
+                close_client(close_index);
+                continue;
+            }
             Atom state_atom = XInternAtom(display, "_NET_WM_STATE", False);
             Atom fullscreen_atom =
                 XInternAtom(display, "_NET_WM_STATE_FULLSCREEN", False);
@@ -1281,6 +1453,7 @@ int main(int argc, char **argv)
             if (index >= 0 &&
                 clients[index].client == event.xunmap.window &&
                 !event.xunmap.send_event) {
+                cancel_pending_close(event.xunmap.window);
                 unmanage_client(index);
                 if (switcher_window != None) {
                     show_switcher();
@@ -1297,6 +1470,7 @@ int main(int argc, char **argv)
             }
             int index = find_client(event.xdestroywindow.window);
             if (index >= 0 && clients[index].client == event.xdestroywindow.window) {
+                cancel_pending_close(event.xdestroywindow.window);
                 forget_client(index);
                 if (switcher_window != None) {
                     show_switcher();
@@ -1402,8 +1576,9 @@ int main(int argc, char **argv)
                 }
                 continue;
             }
-            int title_click = event.xbutton.window == clients[index].frame &&
-                              event.xbutton.y < TITLE_HEIGHT;
+            int title_click = !clients[index].fullscreen &&
+                event.xbutton.window == clients[index].frame &&
+                event.xbutton.y < title_height(&clients[index]);
             int close_click = title_click &&
                 event.xbutton.x >= clients[index].width - 64 &&
                 event.xbutton.x < clients[index].width;
@@ -1423,10 +1598,10 @@ int main(int argc, char **argv)
                 } else if (clients[index].width >= 380) {
                     next_width = 320;
                 }
-                clients[index].width = next_width - RESIZE_BORDER;
+                clients[index].width = next_width - border_width(&clients[index]);
                 clients[index].x = screen_layout.x +
                     (screen_layout.width - clients[index].width -
-                     RESIZE_BORDER) / 2;
+                     border_width(&clients[index])) / 2;
                 arrange_client(index);
                 continue;
             }
@@ -1447,7 +1622,7 @@ int main(int argc, char **argv)
                 } else if (!title_click) {
                     int resize_width = event.xbutton.x >= clients[index].width;
                     int resize_height = event.xbutton.y >=
-                        TITLE_HEIGHT + clients[index].height;
+                        title_height(&clients[index]) + clients[index].height;
                     drag_mode = (resize_width ? 1 : 0) |
                                 (resize_height ? 2 : 0);
                 } else {
@@ -1470,11 +1645,12 @@ int main(int argc, char **argv)
                 int dx = event.xmotion.x_root - drag_root_x;
                 int dy = event.xmotion.y_root - drag_root_y;
                 if (drag_mode != 0) {
-                    int maximum_width = screen_layout.width - RESIZE_BORDER;
-                    int maximum_height = screen_layout.height - TITLE_HEIGHT -
-                        RESIZE_BORDER;
-                    if (keyboard_window != None && focused == index &&
-                        !clients[index].fullscreen) {
+                    int maximum_width = screen_layout.width -
+                                        border_width(&clients[index]);
+                    int maximum_height = screen_layout.height -
+                        title_height(&clients[index]) -
+                        border_width(&clients[index]);
+                    if (keyboard_window != None && focused == index) {
                         maximum_height -= keyboard_height;
                     }
                     if ((drag_mode & 1) != 0) {
@@ -1496,11 +1672,13 @@ int main(int argc, char **argv)
                     clients[index].y = origin_y + dy;
                 }
                 int max_x = screen_layout.x + screen_layout.width -
-                            clients[index].width - RESIZE_BORDER;
+                            clients[index].width -
+                            border_width(&clients[index]);
                 int max_y = screen_layout.y + screen_layout.height -
-                            clients[index].height - TITLE_HEIGHT - RESIZE_BORDER;
-                if (keyboard_window != None && focused == index &&
-                    !clients[index].fullscreen) {
+                            clients[index].height -
+                            title_height(&clients[index]) -
+                            border_width(&clients[index]);
+                if (keyboard_window != None && focused == index) {
                     max_y -= keyboard_height;
                 }
                 if (clients[index].x < screen_layout.x) {

@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+
+description="Hardware key and screen control daemon for FieldM"
+command="/usr/bin/fieldm-keys"
+command_background=true
+pidfile="/run/fieldm-keys.pid"
+
+depend()
+{
+	after localmount
+}
+
+start_pre()
+{
+	touch /var/log/fieldm-keys.log
+}

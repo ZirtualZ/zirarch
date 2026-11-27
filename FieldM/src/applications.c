@@ -740,6 +740,37 @@ static int launch_fallback(ApplicationKind kind)
     return 0;
 }
 
+int applications_kind_available(const Application *applications, size_t count,
+                                ApplicationKind kind)
+{
+    const char *category = kind == APPLICATION_BROWSER
+        ? "WebBrowser" : "FileManager";
+    for (size_t i = 0; i < count; ++i) {
+        if (has_category(&applications[i], category) ||
+            known_kind_executable(&applications[i], kind)) {
+            return 1;
+        }
+    }
+
+    static const char *const browsers[] = {
+        "firefox", "firefox-esr", "chromium", "chromium-browser",
+        "google-chrome", "brave", "librewolf", "epiphany"
+    };
+    static const char *const file_managers[] = {
+        "xdg-open", "thunar", "pcmanfm", "pcmanfm-qt", "nemo",
+        "dolphin", "nautilus", "caja"
+    };
+    const char *const *names = kind == APPLICATION_BROWSER
+        ? browsers : file_managers;
+    size_t name_count = kind == APPLICATION_BROWSER
+        ? sizeof(browsers) / sizeof(browsers[0])
+        : sizeof(file_managers) / sizeof(file_managers[0]);
+    for (size_t i = 0; i < name_count; ++i) {
+        if (executable_available(names[i])) return 1;
+    }
+    return 0;
+}
+
 int applications_launch_kind(const Application *applications, size_t count,
                              ApplicationKind kind)
 {

@@ -9,6 +9,7 @@
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 
+#include <errno.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -112,10 +113,6 @@ static unsigned long long monotonic_ms(void)
 
 static void set_wm_hints(void)
 {
-    XSetWindowAttributes attrs;
-    attrs.override_redirect = True;
-    XChangeWindowAttributes(display, window, CWOverrideRedirect, &attrs);
-
     XSizeHints hints = {0};
     hints.flags = PPosition | PSize;
     hints.x = 0;
@@ -358,11 +355,11 @@ static void build_layout(void)
 
         KeyDef bottom[] = {
             {"ABC", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_LETTERS},
-            {"Term", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
+            {">_", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
             normal_key(",", XK_comma, NULL),
             {"space", NULL, XK_space, NoSymbol, NULL, 4, KEY_SPACE},
             normal_key(".", XK_period, NULL),
-            {"Enter", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
+            {"↵", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
         };
         bottom[3].units = 4;
         add_key_row(bottom, 6, y);
@@ -405,7 +402,7 @@ static void build_layout(void)
         y += key_height;
 
         KeyDef third[] = {
-            {"Shift", "Shift*", NoSymbol, NoSymbol, NULL, 2, KEY_SHIFT},
+            {"⇧", "⇧*", NoSymbol, NoSymbol, NULL, 2, KEY_SHIFT},
             normal_key("z", XK_z, NULL),
             normal_key("x", XK_x, NULL),
             normal_key("c", XK_c, NULL),
@@ -413,7 +410,7 @@ static void build_layout(void)
             normal_key("b", XK_b, NULL),
             normal_key("n", XK_n, NULL),
             normal_key("m", XK_m, NULL),
-            {"Back", NULL, XK_BackSpace, NoSymbol, NULL, 1, KEY_BACKSPACE}
+            {"⌫", NULL, XK_BackSpace, NoSymbol, NULL, 1, KEY_BACKSPACE}
         };
         for (int i = 1; i < 8; ++i) {
             char upper = (char)(third[i].label[0] - 'a' + 'A');
@@ -425,11 +422,11 @@ static void build_layout(void)
 
         KeyDef bottom[] = {
             {"?123", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_SYMBOLS},
-            {"Term", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
+            {">_", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
             normal_key(",", XK_comma, NULL),
             {"space", NULL, XK_space, NoSymbol, NULL, 4, KEY_SPACE},
             normal_key(".", XK_period, NULL),
-            {"Enter", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
+            {"↵", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
         };
         bottom[3].units = 4;
         add_key_row(bottom, 6, y);
@@ -476,7 +473,7 @@ static void fake_modded_keysym(KeySym keysym)
     }
 }
 
-static void activate_key(Key *key)
+static int activate_key(Key *key)
 {
     KeyDef *def = &key->def;
     if (def->action == KEY_SHIFT) {
@@ -485,27 +482,28 @@ static void activate_key(Key *key)
         }
         shifted = !shifted;
         build_layout();
-        return;
+        return 1;
     }
     if (def->action == KEY_SYMBOLS) {
         symbols_page = 1;
         build_layout();
-        return;
+        return 1;
     }
     if (def->action == KEY_LETTERS) {
         symbols_page = 0;
         build_layout();
-        return;
+        return 1;
     }
     if (def->action == KEY_CTRL) {
         sticky_ctrl = !sticky_ctrl;
-        return;
+        return 0;
     }
     if (def->action == KEY_TERMINAL) {
         terminal_page = !terminal_page;
         build_layout();
-        return;
+        return 1;
     }
+    int was_shifted = shifted;
     if (def->keysym != NoSymbol) {
         KeySym sym = (shifted || caps) && def->shifted_keysym != NoSymbol
             ? def->shifted_keysym : def->keysym;
@@ -513,28 +511,38 @@ static void activate_key(Key *key)
     }
     sticky_ctrl = 0;
     if (shifted && !caps) shifted = 0;
-    build_layout();
+    if (was_shifted != shifted) {
+        build_layout();
+        return 1;
+    }
+    return 0;
 }
 
-static void send_long_alternate(Key *key)
+static int send_long_alternate(Key *key)
 {
-    if (key->def.alternate == NULL) return;
+    if (key->def.alternate == NULL) return 0;
     char text = key->def.alternate[0];
     KeySym sym = (text >= '0' && text <= '9') ? (KeySym)(XK_0 + text - '0')
                                                 : NoSymbol;
     if (sym != NoSymbol) fake_key(sym);
     long_press_sent = 1;
+    int was_shifted = shifted;
     if (shifted && !caps) shifted = 0;
+    if (was_shifted != shifted) {
+        build_layout();
+        return 1;
+    }
+    return 0;
 }
 
 static void draw_key(Key *key)
 {
     int index = (int)(key - keys);
     unsigned long background = highlight_enabled && index == pressed_index
-        ? pixel(FIELD_M_FOREGROUND) : pixel(FIELD_M_BACKGROUND);
+        ? text_color.pixel : paper_color.pixel;
     XSetForeground(display, gc, background);
     XFillRectangle(display, window, gc, key->x, key->y, key->w, key->h);
-    XSetForeground(display, gc, pixel(FIELD_M_FOREGROUND));
+    XSetForeground(display, gc, text_color.pixel);
     XSetLineAttributes(display, gc, FIELD_M_BORDER_WIDTH,
                        LineSolid, CapButt, JoinMiter);
     XDrawRectangle(display, window, gc, key->x, key->y,
@@ -542,7 +550,7 @@ static void draw_key(Key *key)
     const char *label = (shifted || caps) && key->def.shift_label != NULL
         ? key->def.shift_label : key->def.label;
     if (key->def.action == KEY_SHIFT && caps)
-        label = "Shift*";
+        label = "⇧*";
     XftColor *foreground = highlight_enabled && index == pressed_index
         ? &paper_color : &text_color;
     XGlyphInfo extents;
@@ -556,12 +564,58 @@ static void draw_key(Key *key)
 
 static void draw_layout(void)
 {
-    XClearWindow(display, window);
-    XSetForeground(display, gc, pixel(FIELD_M_BACKGROUND));
-    XFillRectangle(display, window, gc, 0, 0, WIDTH,
-                   (unsigned int)window_height);
     for (int i = 0; i < key_count; ++i) draw_key(&keys[i]);
-    XSync(display, False);
+    XFlush(display);
+}
+
+static void draw_key_and_flush(int index)
+{
+    if (index >= 0 && index < key_count) {
+        draw_key(&keys[index]);
+        XFlush(display);
+    }
+}
+
+static int font_fits_key_labels(XftFont *candidate)
+{
+    for (int i = 0; i < key_count; ++i) {
+        const char *labels[] = {keys[i].def.label, keys[i].def.shift_label};
+        for (size_t j = 0; j < sizeof(labels) / sizeof(labels[0]); ++j) {
+            if (labels[j] == NULL) continue;
+            XGlyphInfo extents;
+            XftTextExtentsUtf8(display, candidate,
+                               (const FcChar8 *)labels[j],
+                               (int)strlen(labels[j]), &extents);
+            if (extents.xOff > keys[i].w - 16 ||
+                candidate->ascent + candidate->descent > keys[i].h - 12) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+static void update_font(void)
+{
+    if (font != NULL) {
+        XftFontClose(display, font);
+        font = NULL;
+    }
+    double size = (double)key_height * 0.22;
+    for (; size >= 6.0; size -= 0.5) {
+        char pattern[96];
+        snprintf(pattern, sizeof(pattern), "DejaVu Sans:size=%.1f", size);
+        XftFont *candidate = XftFontOpenName(
+            display, DefaultScreen(display), pattern);
+        if (candidate == NULL) continue;
+        if (font_fits_key_labels(candidate)) {
+            font = candidate;
+            return;
+        }
+        XftFontClose(display, candidate);
+    }
+    font = XftFontOpenName(display, DefaultScreen(display),
+                           "DejaVu Sans:size=6");
 }
 
 static int hit_key(int x, int y)
@@ -572,6 +626,15 @@ static int hit_key(int x, int y)
             return i;
     }
     return -1;
+}
+
+static int release_is_near_key(const Key *key, int x, int y)
+{
+    int dx = x < key->x ? key->x - x :
+             x >= key->x + key->w ? x - (key->x + key->w - 1) : 0;
+    int dy = y < key->y ? key->y - y :
+             y >= key->y + key->h ? y - (key->y + key->h - 1) : 0;
+    return dx * dx + dy * dy <= 24 * 24;
 }
 
 int main(void)
@@ -599,7 +662,6 @@ int main(void)
         XRaiseWindow(display, window);
     }
     gc = XCreateGC(display, window, 0, NULL);
-    font = XftFontOpenName(display, screen, "DejaVu Sans Mono:size=16");
     draw = XftDrawCreate(display, window, DefaultVisual(display, screen),
                          DefaultColormap(display, screen));
     XftColorAllocName(display, DefaultVisual(display, screen),
@@ -608,6 +670,7 @@ int main(void)
     XftColorAllocName(display, DefaultVisual(display, screen),
                       DefaultColormap(display, screen),
                       FIELD_M_BACKGROUND, &paper_color);
+    update_font();
 
     draw_layout();
 
@@ -615,8 +678,11 @@ int main(void)
     for (;;) {
         if (config_reload) {
             config_reload = 0;
+            pressed_index = -1;
+            repeat_index = -1;
             load_config();
             build_layout();
+            update_font();
             update_keyboard_visibility();
             draw_layout();
         }
@@ -635,9 +701,12 @@ int main(void)
             long long remaining = (long long)due - (long long)now;
             timeout = remaining > 0 ? (int)remaining : 0;
         }
-        if (poll(&fd, 1, timeout) < 0) continue;
-
-        if (XPending(display) > 0) {
+        int ready = 0;
+        if (XPending(display) == 0) {
+            ready = poll(&fd, 1, timeout);
+            if (ready < 0 && errno != EINTR) continue;
+        }
+        while (XPending(display) > 0) {
             XEvent event;
             XNextEvent(display, &event);
             if (event.type == Expose) {
@@ -654,16 +723,24 @@ int main(void)
                                     keys[pressed_index].def.action == KEY_RIGHT)
                         ? pressed_index : -1;
                     long_press_sent = 0;
-                    draw_layout();
+                    draw_key_and_flush(pressed_index);
                 }
             } else if (event.type == ButtonRelease) {
-                int released = hit_key(event.xbutton.x, event.xbutton.y);
-                if (released >= 0 && released == pressed_index) {
-                    if (!long_press_sent) activate_key(&keys[released]);
-                }
+                int pressed = pressed_index;
+                int should_activate = pressed >= 0 &&
+                    release_is_near_key(&keys[pressed],
+                                        event.xbutton.x, event.xbutton.y);
+                int redraw_all = 0;
                 pressed_index = -1;
                 repeat_index = -1;
-                draw_layout();
+                if (should_activate && !long_press_sent) {
+                    redraw_all = activate_key(&keys[pressed]);
+                }
+                if (redraw_all) {
+                    draw_layout();
+                } else {
+                    draw_key_and_flush(pressed);
+                }
             }
         }
 
@@ -672,13 +749,20 @@ int main(void)
             !long_press_sent &&
             repeat_index < 0 &&
             now - press_started >= (unsigned long long)long_press_ms) {
-            send_long_alternate(&keys[pressed_index]);
-            draw_layout();
+            if (send_long_alternate(&keys[pressed_index])) {
+                draw_layout();
+            } else {
+                draw_key_and_flush(pressed_index);
+            }
         }
         if (repeat_index >= 0 && now >= repeat_due) {
-            activate_key(&keys[repeat_index]);
+            int redraw_all = activate_key(&keys[repeat_index]);
             repeat_due = now + (unsigned long long)repeat_interval_ms;
-            draw_layout();
+            if (redraw_all) {
+                repeat_index = -1;
+                draw_layout();
+            }
         }
+        (void)ready;
     }
 }

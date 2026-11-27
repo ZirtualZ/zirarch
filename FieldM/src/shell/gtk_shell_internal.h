@@ -58,6 +58,8 @@ typedef struct {
     GtkWidget *launcher_results;
     GtkWidget *home_search;
     GtkWidget *home_grid;
+    GtkWidget *home_pinned_title;
+    GtkWidget *home_pinned_scroll;
     GtkWidget *home_clock;
     GtkWidget *home_date;
     GtkWidget *drawer_search;

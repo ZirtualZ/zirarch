@@ -36,6 +36,8 @@ int application_launch_with_catalog(const Application *application,
                                     const Application *applications,
                                     size_t count);
 int application_open_path(const char *path);
+int applications_kind_available(const Application *applications, size_t count,
+                                ApplicationKind kind);
 int applications_launch_kind(const Application *applications, size_t count,
                              ApplicationKind kind);
 int applications_launch_terminal(const Application *applications,
