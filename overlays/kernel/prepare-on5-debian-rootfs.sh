@@ -86,7 +86,7 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	wpasupplicant iw iproute2 isc-dhcp-client
 	xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-evdev
 	xinit x11-xserver-utils x11-utils dbus dbus-x11
-	libgtk-4-dev libx11-dev libxft-dev pkg-config build-essential
+	libgtk-4-dev libx11-dev libxft-dev libxtst-dev pkg-config build-essential
 	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
 	ntpsec-ntpdate fake-hwclock e2fsprogs ca-certificates nano"
@@ -170,8 +170,6 @@ install -m 755 "$KERNEL_DIR/boot-mode/fieldm-keyboard" \
 chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
 	/usr/bin/fieldm-hide-keyboard \
 	/usr/src/zirarch/fieldm-hide-keyboard.c
-install -m 755 "$KERNEL_DIR/boot-mode/fieldm-onboard" \
-	"$ROOT_DIR/usr/bin/fieldm-onboard"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-terminal" \
 	"$ROOT_DIR/usr/bin/fieldm-terminal"
 install -m 644 "$PROJECT_DIR/FieldM/terminal.desktop" \

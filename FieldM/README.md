@@ -9,9 +9,8 @@ and drag gestures directly through normal X11 button events.
 ## Features
 
 - GTK shell with a two-button mobile panel and large common launch shortcuts.
-- Cyber-minimal 720x1280 FieldM redesign with a 48px status bar and 68px
-  thumb dock. The shell uses flat `#0D1015`, `#11151C`, `#21262D`, and
-  `#00E5A8` colors, with no blur, shadows, or animations.
+- Paper 720x1280 FieldM redesign with a 48px status bar and no dock.
+- Native `fieldm-kbd` on-screen keyboard in C with XTest input synthesis.
 - Searchable application launcher, including the window manager's `Alt+Space`
   shortcut and single-tap activation.
 - Window manager with large title bars and close targets, portrait-screen
@@ -46,13 +45,8 @@ manage `svkbd` processes directly. The runtime helper should support:
 - `fieldm-keyboard entry on|off` while a FieldM text field owns focus.
 - `fieldm-keyboard terminal on|off` while a managed terminal exists.
 
-On Debian, `fieldm-onboard` wraps Onboard with a GTK keysym conversion because
-Debian 13 Onboard's Python 3.13 virtkey Unicode call fails for symbol keys.
-The helper keeps one hidden process warm and toggles it over D-Bus instead of
-restarting Onboard for every focus change.
-
-The helper is required only at runtime and is intentionally outside this
-project's build/install scope.
+The keyboard helper starts `fieldm-kbd` when available and keeps `svkbd` only
+as a fallback. Onboard and D-Bus keyboard integration are not used.
 
 Example packages:
 

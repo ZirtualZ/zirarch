@@ -68,3 +68,11 @@ Thumbs.db
 *~
 /.idea/
 /.vscode/
+
+# Prompt and scratch working files
+/prompt.md
+/error.md
+/fix*.md
+/notes/
+/scratch/
+/*.local.md

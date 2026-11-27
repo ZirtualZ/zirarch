@@ -25,18 +25,12 @@ void shell_show_error(GtkWindow *parent, const char *message)
 
 void shell_update_styles(ShellState *state)
 {
-    const char *paths[] = {
-        "/usr/share/fieldm/fieldm.css",
-        "/mnt/zirarch/zirarch/FieldM/data/fieldm.css",
-        NULL
-    };
-    for (int i = 0; paths[i] != NULL; ++i) {
-        if (g_file_test(paths[i], G_FILE_TEST_IS_REGULAR)) {
-            gtk_css_provider_load_from_path(state->styles, paths[i]);
-            return;
-        }
+    const char *path = "/usr/share/fieldm/fieldm.css";
+    if (g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
+        gtk_css_provider_load_from_path(state->styles, path);
+        return;
     }
-    fprintf(stderr, "Could not find the FieldM stylesheet.\n");
+    fprintf(stderr, "Could not find FieldM stylesheet: %s\n", path);
 }
 
 static void settings_path(char *path, size_t size)

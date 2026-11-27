@@ -149,7 +149,7 @@ static int client_is_terminal(Window window)
 
 static int text_matches_keyboard(const char *text)
 {
-    static const char *const names[] = {"svkbd", "onboard", "fieldm-kbd"};
+    static const char *const names[] = {"svkbd", "fieldm-kbd"};
     if (text == NULL) {
         return 0;
     }
@@ -740,7 +740,7 @@ static void draw_taskbar_monitor(void)
     if (window == None || !taskbar_enabled) {
         return;
     }
-    XSetForeground(display, gc, named_color("#F4F1EA"));
+    XSetForeground(display, gc, named_color(FIELD_M_BACKGROUND));
     XFillRectangle(display, window, gc, 0, 0,
                    (unsigned int)width, TASKBAR_HEIGHT);
     XSetForeground(display, gc, outline_color);
@@ -1037,14 +1037,14 @@ int main(int argc, char **argv)
     Cursor pointer_cursor = XCreateFontCursor(display, XC_left_ptr);
     XDefineCursor(display, root, pointer_cursor);
     XFreeCursor(display, pointer_cursor);
-    frame_color = named_color("#F4F1EA");
-    active_color = named_color("#111111");
-    switcher_color = named_color("#F4F1EA");
-    panel_color = named_color("#F4F1EA");
-    button_color = named_color("#F4F1EA");
-    button_active_color = named_color("#111111");
-    outline_color = named_color("#111111");
-    close_color = named_color("#E2DDD2");
+    frame_color = named_color(FIELD_M_BACKGROUND);
+    active_color = named_color(FIELD_M_FOREGROUND);
+    switcher_color = named_color(FIELD_M_BACKGROUND);
+    panel_color = named_color(FIELD_M_BACKGROUND);
+    button_color = named_color(FIELD_M_BACKGROUND);
+    button_active_color = named_color(FIELD_M_FOREGROUND);
+    outline_color = named_color(FIELD_M_FOREGROUND);
+    close_color = named_color(FIELD_M_PRESSED);
     gc = XCreateGC(display, root, 0, NULL);
     ui_font = XftFontOpenName(display, screen, "DejaVu Serif:size=18");
     if (ui_font == NULL) {
@@ -1057,10 +1057,10 @@ int main(int argc, char **argv)
         }
         fprintf(stderr, "simple-wm: using the X11 core font fallback\n");
     }
-    allocate_text_color("#111111", &text_xft);
-    allocate_text_color("#111111", &muted_xft);
-    allocate_text_color("#111111", &accent_xft);
-    allocate_text_color("#F4F1EA", &dark_xft);
+    allocate_text_color(FIELD_M_FOREGROUND, &text_xft);
+    allocate_text_color(FIELD_M_FOREGROUND, &muted_xft);
+    allocate_text_color(FIELD_M_FOREGROUND, &accent_xft);
+    allocate_text_color(FIELD_M_BACKGROUND, &dark_xft);
     XSelectInput(display, root, SubstructureRedirectMask | SubstructureNotifyMask |
                  StructureNotifyMask | ButtonPressMask | KeyPressMask |
                  PropertyChangeMask);

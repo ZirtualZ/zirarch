@@ -489,11 +489,12 @@ static void activate(GtkApplication *application, gpointer data)
     gtk_window_set_default_size(state->window, 700, 1100);
 
     GtkCssProvider *css = gtk_css_provider_new();
-    const char *css_path = g_file_test(
-        "/usr/share/fieldm/fieldm.css", G_FILE_TEST_IS_REGULAR)
-        ? "/usr/share/fieldm/fieldm.css"
-        : "/mnt/zirarch/zirarch/FieldM/data/fieldm.css";
-    gtk_css_provider_load_from_path(css, css_path);
+    const char *css_path = "/usr/share/fieldm/fieldm.css";
+    if (!g_file_test(css_path, G_FILE_TEST_IS_REGULAR)) {
+        fprintf(stderr, "Could not find FieldM stylesheet: %s\n", css_path);
+    } else {
+        gtk_css_provider_load_from_path(css, css_path);
+    }
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(), GTK_STYLE_PROVIDER(css),
         GTK_STYLE_PROVIDER_PRIORITY_USER);

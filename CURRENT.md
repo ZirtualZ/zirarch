@@ -13,8 +13,7 @@ with `gui` unless it already contains an explicit boot mode.
 
 ## RNDIS SSH
 
-Root SSH allows public-key login and password login. The current lab password
-is `zane`.
+Root SSH allows public-key login and password login.
 
 On the host:
 
@@ -33,7 +32,7 @@ host boots.
 From `/mnt/zirarch/zirarch`:
 
 ```sh
-sudo env ZIRARCH_ROOT_PASSWORD=zane ./build-debian-on5.sh
+sudo env ZIRARCH_ROOT_PASSWORD=<root-password> ./build-debian-on5.sh
 ```
 
 This rebuilds the Debian rootfs, SYSTEM image, BOOT image, and kernel artifacts.

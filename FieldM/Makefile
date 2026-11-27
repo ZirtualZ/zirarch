@@ -57,7 +57,7 @@ fieldm-keys: src/fieldm-keys.c
 
 fieldm-kbd: src/fieldm-kbd.c src/theme.h
 	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ src/fieldm-kbd.c \
-		$(LDLIBS) $(XFT_LIBS)
+		$(LDLIBS) $(XFT_LIBS) -lXtst
 
 install: all
 	install -Dm755 simple-desktop "$(DESTDIR)$(BINDIR)/simple-desktop"
