@@ -31,6 +31,8 @@ typedef enum {
     KEY_ENTER,
     KEY_TERMINAL,
     KEY_CTRL,
+    KEY_CLOSE,
+    KEY_ZOOM_OUT,
     KEY_ESCAPE,
     KEY_TAB,
     KEY_LEFT,
@@ -306,7 +308,7 @@ static void build_layout(void)
             {" >", NULL, XK_Right, NoSymbol, NULL, 1, KEY_RIGHT},
             {"|", NULL, XK_bar, NoSymbol, NULL, 1, KEY_NORMAL},
             {"~", NULL, XK_asciitilde, NoSymbol, NULL, 1, KEY_NORMAL},
-            {"/", NULL, XK_slash, NoSymbol, NULL, 1, KEY_NORMAL}
+            {"A−", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_ZOOM_OUT}
         };
         add_key_row(terminal, 10, y);
         y += key_height;
@@ -354,15 +356,15 @@ static void build_layout(void)
         y += key_height;
 
         KeyDef bottom[] = {
-            {"ABC", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_LETTERS},
+            {"ABC", NULL, NoSymbol, NoSymbol, NULL, 2, KEY_LETTERS},
             {">_", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
             normal_key(",", XK_comma, NULL),
-            {"space", NULL, XK_space, NoSymbol, NULL, 4, KEY_SPACE},
+            {"space", NULL, XK_space, NoSymbol, NULL, 3, KEY_SPACE},
             normal_key(".", XK_period, NULL),
-            {"↵", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
+            {"×", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_CLOSE},
+            {"↵", NULL, XK_Return, NoSymbol, NULL, 1, KEY_ENTER}
         };
-        bottom[3].units = 4;
-        add_key_row(bottom, 6, y);
+        add_key_row(bottom, 7, y);
     } else {
         if (number_row) {
             KeyDef digits[] = {
@@ -424,12 +426,12 @@ static void build_layout(void)
             {"?123", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_SYMBOLS},
             {">_", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_TERMINAL},
             normal_key(",", XK_comma, NULL),
-            {"space", NULL, XK_space, NoSymbol, NULL, 4, KEY_SPACE},
+            {"space", NULL, XK_space, NoSymbol, NULL, 3, KEY_SPACE},
             normal_key(".", XK_period, NULL),
+            {"×", NULL, NoSymbol, NoSymbol, NULL, 1, KEY_CLOSE},
             {"↵", NULL, XK_Return, NoSymbol, NULL, 2, KEY_ENTER}
         };
-        bottom[3].units = 4;
-        add_key_row(bottom, 6, y);
+        add_key_row(bottom, 7, y);
     }
     update_window_geometry();
 }
@@ -473,6 +475,18 @@ static void fake_modded_keysym(KeySym keysym)
     }
 }
 
+static void fake_chord(KeySym modifier, KeySym keysym)
+{
+    KeyCode modifier_code = XKeysymToKeycode(display, modifier);
+    if (modifier_code == 0 || XKeysymToKeycode(display, keysym) == 0) {
+        return;
+    }
+    XTestFakeKeyEvent(display, modifier_code, True, CurrentTime);
+    fake_key(keysym);
+    XTestFakeKeyEvent(display, modifier_code, False, CurrentTime);
+    XFlush(display);
+}
+
 static int activate_key(Key *key)
 {
     KeyDef *def = &key->def;
@@ -496,6 +510,14 @@ static int activate_key(Key *key)
     }
     if (def->action == KEY_CTRL) {
         sticky_ctrl = !sticky_ctrl;
+        return 0;
+    }
+    if (def->action == KEY_CLOSE) {
+        fake_chord(XK_Alt_L, XK_F4);
+        return 0;
+    }
+    if (def->action == KEY_ZOOM_OUT) {
+        fake_chord(XK_Shift_L, XK_KP_Subtract);
         return 0;
     }
     if (def->action == KEY_TERMINAL) {
@@ -714,6 +736,15 @@ int main(void)
             } else if (event.type == ButtonPress) {
                 pressed_index = hit_key(event.xbutton.x, event.xbutton.y);
                 if (pressed_index >= 0) {
+                    KeyAction action = keys[pressed_index].def.action;
+                    if (action == KEY_SYMBOLS || action == KEY_LETTERS) {
+                        int page_key = pressed_index;
+                        pressed_index = -1;
+                        repeat_index = -1;
+                        activate_key(&keys[page_key]);
+                        draw_layout();
+                        continue;
+                    }
                     press_started = monotonic_ms();
                     repeat_due = press_started + (unsigned long long)repeat_delay_ms;
                     repeat_index = (keys[pressed_index].def.action == KEY_BACKSPACE ||
