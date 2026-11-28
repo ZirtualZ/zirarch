@@ -217,6 +217,13 @@ progressbar progress, scale highlight {
   background: transparent;
 }
 
+.lock-clock {
+  font-family: "DejaVu Sans Mono";
+  font-size: 72px;
+  font-weight: 700;
+  background: transparent;
+}
+
 .home-date {
   font-size: 20px;
   background: transparent;
