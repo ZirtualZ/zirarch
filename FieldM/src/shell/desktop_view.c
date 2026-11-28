@@ -993,7 +993,18 @@ static GtkWidget *make_quick_settings(ShellState *state)
     GtkWidget *gear = gtk_button_new_with_label("Settings");
     GtkWidget *theme = gtk_button_new_with_label(
         state->dark_theme ? "Theme\nDark" : "Theme\nLight");
-    GtkWidget *power = gtk_button_new_with_label("Power\nNormal");
+    char power_mode[32] = "normal";
+    FILE *power_file = fopen("/var/lib/zirarch/power-mode", "r");
+    if (power_file != NULL) {
+        fscanf(power_file, "%31s", power_mode);
+        fclose(power_file);
+    }
+    char power_label[64];
+    snprintf(power_label, sizeof(power_label),
+             "Power\n%s",
+             strcmp(power_mode, "medium") == 0 ? "Medium"
+             : strcmp(power_mode, "extreme") == 0 ? "Extreme" : "Normal");
+    GtkWidget *power = gtk_button_new_with_label(power_label);
     gtk_widget_set_size_request(wifi, 150, 104);
     gtk_widget_set_size_request(keyboard, 150, 104);
     gtk_widget_set_size_request(gear, 150, 104);

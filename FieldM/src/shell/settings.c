@@ -475,6 +475,73 @@ static GtkWidget *apps_page(ShellState *state)
     return page;
 }
 
+static gboolean battery_refresh_table(gpointer data)
+{
+    GtkLabel *label = GTK_LABEL(data);
+    char table[512];
+    char cores[4][16];
+    for (int cpu = 0; cpu < 4; ++cpu) {
+        snprintf(cores[cpu], sizeof(cores[cpu]), "%d=on", cpu);
+        if (cpu != 0) {
+            char path[128];
+            int online = 0;
+            snprintf(path, sizeof(path),
+                     "/sys/devices/system/cpu/cpu%d/online", cpu);
+            FILE *file = fopen(path, "r");
+            if (file != NULL) {
+                fscanf(file, "%d", &online);
+                fclose(file);
+            }
+            snprintf(cores[cpu], sizeof(cores[cpu]), "%d=%s",
+                     cpu, online ? "on" : "off");
+        }
+    }
+    char governor[64] = "unknown";
+    char max_freq[64] = "unknown";
+    char brightness[64] = "unknown";
+    FILE *file = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "r");
+    if (file != NULL) {
+        fscanf(file, "%63s", governor);
+        fclose(file);
+    }
+    file = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "r");
+    if (file != NULL) {
+        fscanf(file, "%63s", max_freq);
+        fclose(file);
+    }
+    file = fopen("/sys/devices/14800000.dsim/backlight/panel/brightness", "r");
+    if (file != NULL) {
+        fscanf(file, "%63s", brightness);
+        fclose(file);
+    }
+    snprintf(table, sizeof(table),
+             "Cores: %s %s %s %s\nGovernor: %s\nMax freq: %s Hz\nBrightness: %s",
+             cores[0], cores[1], cores[2], cores[3],
+             governor, max_freq, brightness);
+    gtk_label_set_text(label, table);
+    return G_SOURCE_REMOVE;
+}
+
+static void battery_power_mode_clicked(GtkButton *button, gpointer data)
+{
+    const char *mode = data != NULL ? (const char *)data : "normal";
+    char *arguments[] = {(char *)"/usr/bin/zirarch-power",
+                         (char *)mode, NULL};
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+    GtkWidget *parent = gtk_widget_get_parent(GTK_WIDGET(button));
+    if (parent != NULL) {
+        for (GtkWidget *child = gtk_widget_get_first_child(parent);
+             child != NULL;
+             child = gtk_widget_get_next_sibling(child)) {
+            gtk_widget_remove_css_class(child, "primary-action");
+        }
+        gtk_widget_add_css_class(GTK_WIDGET(button), "primary-action");
+    }
+    g_timeout_add(500, battery_refresh_table,
+                  g_object_get_data(G_OBJECT(button), "battery-table"));
+}
+
 static GtkWidget *battery_page(void)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -522,6 +589,89 @@ static GtkWidget *battery_page(void)
         g_dir_close(directory);
     }
     if (!found) gtk_box_append(GTK_BOX(page), gtk_label_new("Battery status unavailable"));
+    GtkWidget *mode_heading = gtk_label_new("Power mode");
+    gtk_widget_add_css_class(mode_heading, "title-2");
+    gtk_label_set_xalign(GTK_LABEL(mode_heading), 0.0f);
+    gtk_box_append(GTK_BOX(page), mode_heading);
+    GtkWidget *modes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *normal = gtk_button_new_with_label("Normal");
+    GtkWidget *medium = gtk_button_new_with_label("Medium");
+    GtkWidget *extreme = gtk_button_new_with_label("Extreme");
+    gtk_widget_set_hexpand(normal, TRUE);
+    gtk_widget_set_hexpand(medium, TRUE);
+    gtk_widget_set_hexpand(extreme, TRUE);
+    gtk_widget_set_size_request(normal, -1, 64);
+    gtk_widget_set_size_request(medium, -1, 64);
+    gtk_widget_set_size_request(extreme, -1, 64);
+    char current[32] = "normal";
+    FILE *mode_file = fopen("/var/lib/zirarch/power-mode", "r");
+    if (mode_file != NULL) {
+        fscanf(mode_file, "%31s", current);
+        fclose(mode_file);
+    }
+    if (strcmp(current, "normal") == 0)
+        gtk_widget_add_css_class(normal, "primary-action");
+    else if (strcmp(current, "medium") == 0)
+        gtk_widget_add_css_class(medium, "primary-action");
+    else if (strcmp(current, "extreme") == 0)
+        gtk_widget_add_css_class(extreme, "primary-action");
+    gtk_box_append(GTK_BOX(modes), normal);
+    gtk_box_append(GTK_BOX(modes), medium);
+    gtk_box_append(GTK_BOX(modes), extreme);
+    gtk_box_append(GTK_BOX(page), modes);
+    g_signal_connect(normal, "clicked", G_CALLBACK(battery_power_mode_clicked),
+                     (gpointer)"normal");
+    g_signal_connect(medium, "clicked", G_CALLBACK(battery_power_mode_clicked),
+                     (gpointer)"medium");
+    g_signal_connect(extreme, "clicked", G_CALLBACK(battery_power_mode_clicked),
+                     (gpointer)"extreme");
+    char table[512];
+    char cores[4][16] = {"0=on", "1=on", "2=on", "3=on"};
+    for (int cpu = 0; cpu < 4; ++cpu) {
+        char path[128];
+        snprintf(path, sizeof(path),
+                 "/sys/devices/system/cpu/cpu%d/online", cpu);
+        if (cpu == 0) {
+            snprintf(cores[cpu], sizeof(cores[cpu]), "0=on");
+        } else {
+            FILE *file = fopen(path, "r");
+            int online = 0;
+            if (file != NULL) {
+                fscanf(file, "%d", &online);
+                fclose(file);
+            }
+            snprintf(cores[cpu], sizeof(cores[cpu]), "%d=%s",
+                     cpu, online ? "on" : "off");
+        }
+    }
+    char governor[64] = "unknown";
+    char max_freq[64] = "unknown";
+    char current_brightness[64] = "unknown";
+    FILE *file = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "r");
+    if (file != NULL) {
+        fscanf(file, "%63s", governor);
+        fclose(file);
+    }
+    file = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq", "r");
+    if (file != NULL) {
+        fscanf(file, "%63s", max_freq);
+        fclose(file);
+    }
+    file = fopen("/sys/devices/14800000.dsim/backlight/panel/brightness", "r");
+    if (file != NULL) {
+        fscanf(file, "%63s", current_brightness);
+        fclose(file);
+    }
+    snprintf(table, sizeof(table),
+             "Cores: %s %s %s %s\nGovernor: %s\nMax freq: %s Hz\nBrightness: %s",
+             cores[0], cores[1], cores[2], cores[3],
+             governor, max_freq, current_brightness);
+    GtkWidget *table_label = gtk_label_new(table);
+    gtk_label_set_xalign(GTK_LABEL(table_label), 0.0f);
+    g_object_set_data(G_OBJECT(normal), "battery-table", table_label);
+    g_object_set_data(G_OBJECT(medium), "battery-table", table_label);
+    g_object_set_data(G_OBJECT(extreme), "battery-table", table_label);
+    gtk_box_append(GTK_BOX(page), table_label);
     return page;
 }
 
