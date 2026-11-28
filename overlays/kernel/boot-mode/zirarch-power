@@ -1,0 +1,107 @@
+#!/bin/sh
+set -u
+
+mode=${1:-}
+mode_file=/var/lib/zirarch/power-mode
+previous_dir=/var/lib/zirarch/power-previous
+mkdir -p /var/lib/zirarch "$previous_dir"
+
+save_policy()
+{
+	policy=$1
+	name=$(basename "$policy")
+	mkdir -p "$previous_dir/$name"
+	for file in scaling_governor scaling_max_freq; do
+		[ -r "$policy/$file" ] &&
+			cp "$policy/$file" "$previous_dir/$name/$file"
+	done
+}
+
+set_policy()
+{
+	policy=$1
+	governor=$2
+	ratio=$3
+	name=$(basename "$policy")
+	[ -r "$policy/scaling_governor" ] || return
+	save_policy "$policy"
+	printf '%s\n' "$governor" > "$policy/scaling_governor" 2>/dev/null || :
+	if [ "$ratio" -gt 0 ] &&
+	   [ -r "$policy/cpuinfo_max_freq" ] &&
+	   [ -w "$policy/scaling_max_freq" ]; then
+		max=$(cat "$policy/cpuinfo_max_freq")
+		case "$max" in ''|*[!0-9]*) return ;; esac
+		limit=$((max * ratio / 100))
+		printf '%s\n' "$limit" > "$policy/scaling_max_freq" 2>/dev/null || :
+	fi
+}
+
+restore_policies()
+{
+	for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+		[ -d "$policy" ] || continue
+		name=$(basename "$policy")
+		if [ -r "$previous_dir/$name/scaling_governor" ]; then
+			cat "$previous_dir/$name/scaling_governor" \
+				> "$policy/scaling_governor" 2>/dev/null || :
+		fi
+		if [ -r "$previous_dir/$name/scaling_max_freq" ]; then
+			cat "$previous_dir/$name/scaling_max_freq" \
+				> "$policy/scaling_max_freq" 2>/dev/null || :
+		fi
+	done
+}
+
+set_brightness()
+{
+	for node in /sys/devices/14800000.dsim/backlight/panel/brightness \
+		/sys/class/backlight/*/brightness; do
+		[ -w "$node" ] || continue
+		base=${node%/brightness}/max_brightness
+		max=255
+		[ -r "$base" ] && max=$(cat "$base")
+		case "$max" in ''|*[!0-9]*) max=255 ;; esac
+		value=$((max * $1 / 100))
+		[ "$value" -gt 0 ] || value=1
+		printf '%s\n' "$value" > "$node" 2>/dev/null || :
+	done
+}
+
+set_core_online()
+{
+	cpu=$1
+	online=$2
+	[ "$cpu" -eq 0 ] && return
+	node="/sys/devices/system/cpu/cpu$cpu/online"
+	[ -w "$node" ] && printf '%s\n' "$online" > "$node" 2>/dev/null || :
+}
+
+case "$mode" in
+	normal)
+		restore_policies
+		for cpu in 1 2 3; do set_core_online "$cpu" 1; done
+		set_brightness 100
+		;;
+	medium)
+		set_core_online 2 0
+		set_core_online 3 0
+		set_policy /sys/devices/system/cpu/cpufreq/policy0 powersave 70
+		set_brightness 50
+		command -v iw >/dev/null 2>&1 &&
+			iw dev wlan0 set power_save on >/dev/null 2>&1 || :
+		;;
+	extreme)
+		set_core_online 1 0
+		set_core_online 2 0
+		set_core_online 3 0
+		set_policy /sys/devices/system/cpu/cpufreq/policy0 powersave 50
+		set_brightness 15
+		command -v iw >/dev/null 2>&1 &&
+			iw dev wlan0 set power_save on >/dev/null 2>&1 || :
+		sed -i '/^theme=/d' /root/.config/simple-desktop/features 2>/dev/null || :
+		printf 'theme=dark\n' >> /root/.config/simple-desktop/features
+		;;
+	*) echo "usage: zirarch-power normal|medium|extreme" >&2; exit 1 ;;
+esac
+
+printf '%s\n' "$mode" > "$mode_file"

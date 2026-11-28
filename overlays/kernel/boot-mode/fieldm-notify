@@ -1,0 +1,16 @@
+#!/bin/sh
+set -u
+
+text=${1:-}
+[ -n "$text" ] || exit 0
+mkdir -p /run
+stamp=$(date +%H:%M)
+printf '%s\t%s\n' "$stamp" "$text" >> /run/fieldm-notifications.tsv
+tail -n 20 /run/fieldm-notifications.tsv >/run/fieldm-notifications.tsv.tmp
+mv /run/fieldm-notifications.tsv.tmp /run/fieldm-notifications.tsv
+
+if command -v notify-send >/dev/null 2>&1; then
+	DISPLAY=:0 notify-send "Zirarch" "$text" --expire-time=3000 2>/dev/null &
+elif command -v xmessage >/dev/null 2>&1; then
+	DISPLAY=:0 xmessage -timeout 3 "$text" >/dev/null 2>&1 &
+fi

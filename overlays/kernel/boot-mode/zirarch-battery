@@ -1,0 +1,43 @@
+#!/bin/sh
+set -u
+
+last20=
+last10=
+while :; do
+	capacity=
+	status=
+	for supply in /sys/class/power_supply/*; do
+		[ -r "$supply/type" ] || continue
+		[ "$(cat "$supply/type" 2>/dev/null)" = Battery ] || continue
+		capacity=$(cat "$supply/capacity" 2>/dev/null)
+		status=$(cat "$supply/status" 2>/dev/null)
+		break
+	done
+	case "$capacity" in ''|*[!0-9]*) capacity=100 ;; esac
+	if [ "$capacity" -le 20 ] && [ "$status" != Charging ] &&
+	   [ "$last20" != "$capacity" ]; then
+		[ -x /usr/bin/fieldm-notify ] &&
+			/usr/bin/fieldm-notify "Battery 20% - medium saver available"
+		last20=$capacity
+	fi
+	if [ "$capacity" -le 10 ] && [ "$status" != Charging ] &&
+	   [ "$last10" != "$capacity" ]; then
+		[ -x /usr/bin/fieldm-notify ] &&
+			/usr/bin/fieldm-notify "Battery 10% - connect charger"
+		last10=$capacity
+	fi
+	if [ "$capacity" -le 3 ] && [ "$status" != Charging ]; then
+		[ -x /usr/bin/fieldm-notify ] &&
+			/usr/bin/fieldm-notify "Battery 3% - shutting down in 10 seconds"
+		rm -f /run/zirarch-cancel-shutdown
+		for second in 10 9 8 7 6 5 4 3 2 1; do
+			[ -e /run/zirarch-cancel-shutdown ] && break
+			sleep 1
+		done
+		if [ ! -e /run/zirarch-cancel-shutdown ]; then
+			sync
+			poweroff
+		fi
+	fi
+	sleep 30
+done

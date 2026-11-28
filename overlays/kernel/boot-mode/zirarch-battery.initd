@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+
+description="FieldM battery notices and shutdown protection"
+command="/usr/bin/zirarch-battery"
+command_background=true
+pidfile="/run/zirarch-battery.pid"
+
+depend()
+{
+	after localmount fieldm-logs
+}

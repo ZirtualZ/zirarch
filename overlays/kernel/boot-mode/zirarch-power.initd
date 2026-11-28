@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+
+description="Reapply FieldM power mode"
+
+depend()
+{
+	after localmount
+	before zirarch-boot-mode
+}
+
+start()
+{
+	[ -r /var/lib/zirarch/power-mode ] || return 0
+	mode=$(cat /var/lib/zirarch/power-mode)
+	/usr/bin/zirarch-power "$mode" >/dev/null 2>&1 || true
+	eend 0
+}

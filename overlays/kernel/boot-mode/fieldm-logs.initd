@@ -1,0 +1,35 @@
+#!/sbin/openrc-run
+
+description="RAM-backed FieldM and diagnostic logs"
+
+depend()
+{
+	before fieldm-keys wpa-supplicant-zirarch zirarch-boot-mode
+}
+
+start()
+{
+	mkdir -p /var/log/fieldm
+	mountpoint -q /var/log/fieldm || mount -t tmpfs -o mode=0750,size=8M tmpfs /var/log/fieldm
+
+	for log in fieldm-keys fieldm-keyboard fieldm-imd fieldm-desktop \
+		fieldm-hwtest fieldm-clock; do
+		ln -sf "/var/log/fieldm/$log.log" "/var/log/$log.log" 2>/dev/null || :
+	done
+	[ -e /var/log/Xorg.0.log ] && mv /var/log/Xorg.0.log /var/log/fieldm/Xorg.0.log.prev 2>/dev/null || :
+	[ -e /root/.xsession-errors ] && mv /root/.xsession-errors /var/log/fieldm/.xsession-errors.prev 2>/dev/null || :
+
+	for log in $(find /var/log/fieldm -maxdepth 1 -type f 2>/dev/null); do
+		[ -f "$log" ] || continue
+		size=$(wc -c < "$log" 2>/dev/null || echo 0)
+		[ "$size" -le 1048576 ] || mv -f "$log" "$log.1" 2>/dev/null || :
+	done
+
+	for log in boot-dmesg zirarch-post zirarch-boot-timing; do
+		source="/var/log/$log.log"
+		if [ -f "$source" ]; then
+			mv -f "$source" "$source.prev" 2>/dev/null || :
+		fi
+	done
+	eend 0
+}
