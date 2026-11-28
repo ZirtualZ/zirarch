@@ -2,13 +2,19 @@
 
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#include <X11/Xutil.h>
 
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct {
     GtkWidget *window;
@@ -31,6 +37,57 @@ static int dark_theme(void)
     }
     fclose(file);
     return dark;
+}
+
+static int browser_activate_existing(void)
+{
+    Display *display = XOpenDisplay(NULL);
+    if (display == NULL) return 0;
+    Window root = DefaultRootWindow(display);
+    Atom client_list = XInternAtom(display, "_NET_CLIENT_LIST", False);
+    Atom active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long count, bytes_after;
+    unsigned char *value = NULL;
+    int found = 0;
+    if (XGetWindowProperty(display, root, client_list, 0, 1024, False,
+                           XA_WINDOW, &actual_type, &actual_format,
+                           &count, &bytes_after, &value) == Success &&
+        value != NULL && actual_type == XA_WINDOW && actual_format == 32) {
+        Window *clients = (Window *)value;
+        for (unsigned long i = 0; i < count && !found; ++i) {
+            XClassHint hint = {0};
+            if (XGetClassHint(display, clients[i], &hint)) {
+                if ((hint.res_name != NULL &&
+                     strstr(hint.res_name, "fieldm-browser") != NULL) ||
+                    (hint.res_class != NULL &&
+                     strstr(hint.res_class, "fieldm-browser") != NULL)) {
+                    XEvent event;
+                    memset(&event, 0, sizeof(event));
+                    event.xclient.type = ClientMessage;
+                    event.xclient.window = clients[i];
+                    event.xclient.message_type = active_window;
+                    event.xclient.format = 32;
+                    event.xclient.data.l[0] = 1;
+                    event.xclient.data.l[1] = CurrentTime;
+                    XSendEvent(display, root, False,
+                               SubstructureRedirectMask |
+                               SubstructureNotifyMask, &event);
+                    XRaiseWindow(display, clients[i]);
+                    XSetInputFocus(display, clients[i],
+                                   RevertToPointerRoot, CurrentTime);
+                    XFlush(display);
+                    found = 1;
+                }
+                if (hint.res_name != NULL) XFree(hint.res_name);
+                if (hint.res_class != NULL) XFree(hint.res_class);
+            }
+        }
+    }
+    if (value != NULL) XFree(value);
+    XCloseDisplay(display);
+    return found;
 }
 
 static void load_uri(BrowserState *state, const char *text)
@@ -82,6 +139,37 @@ static void back_clicked(GtkButton *button, BrowserState *state)
         webkit_web_view_go_back(state->web);
     else
         gtk_window_close(GTK_WINDOW(state->window));
+}
+
+static gboolean browser_delete_event(GtkWidget *window, GdkEvent *event,
+                                     BrowserState *state)
+{
+    (void)window;
+    (void)event;
+    (void)state;
+    gtk_main_quit();
+    return FALSE;
+}
+
+static gboolean browser_key_press(GtkWidget *window, GdkEventKey *event,
+                                  BrowserState *state)
+{
+    (void)window;
+    if ((event->state & GDK_MOD1_MASK) &&
+        event->keyval == GDK_KEY_Left) {
+        if (webkit_web_view_can_go_back(state->web))
+            webkit_web_view_go_back(state->web);
+        else
+            gtk_window_close(GTK_WINDOW(state->window));
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void browser_close_clicked(GtkMenuItem *item, BrowserState *state)
+{
+    (void)item;
+    gtk_window_close(GTK_WINDOW(state->window));
 }
 
 static void forward_clicked(GtkButton *button, BrowserState *state)
@@ -203,6 +291,10 @@ static void menu_clicked(GtkButton *button, BrowserState *state)
     add_menu_item(menu, state->desktop ? "Mobile site" : "Desktop site",
                   "desktop", state);
     add_menu_item(menu, "Clear data", "clear", state);
+    GtkWidget *close = gtk_menu_item_new_with_label("Close browser");
+    g_signal_connect(close, "activate",
+                     G_CALLBACK(browser_close_clicked), state);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), close);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_widget(GTK_MENU(menu), GTK_WIDGET(button),
                              GDK_GRAVITY_SOUTH_WEST,
@@ -225,6 +317,13 @@ static void desktop_action(BrowserState *state)
 
 int main(int argc, char **argv)
 {
+    int lock_fd = open("/run/fieldm-browser.lock",
+                       O_CREAT | O_RDWR, 0600);
+    if (lock_fd >= 0 && flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        browser_activate_existing();
+        close(lock_fd);
+        return 0;
+    }
     gtk_init(&argc, &argv);
     BrowserState *state = g_new0(BrowserState, 1);
 
@@ -314,6 +413,10 @@ int main(int argc, char **argv)
                      "download-started", G_CALLBACK(download_started), state);
 
     g_signal_connect(state->window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(state->window, "delete-event",
+                     G_CALLBACK(browser_delete_event), state);
+    g_signal_connect(state->window, "key-press-event",
+                     G_CALLBACK(browser_key_press), state);
     gtk_widget_show_all(state->window);
 
     if (argc > 1)

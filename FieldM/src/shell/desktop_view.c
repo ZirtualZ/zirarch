@@ -511,6 +511,41 @@ static gboolean recents_refresh_after_close(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
+static gboolean recents_kill_force(gpointer data)
+{
+    Window client = (Window)GPOINTER_TO_UINT(data);
+    GdkDisplay *gdk_display = gdk_display_get_default();
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    Display *display = gdk_x11_display_get_xdisplay(
+        GDK_X11_DISPLAY(gdk_display));
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    XWindowAttributes attributes;
+    if (XGetWindowAttributes(display, client, &attributes) &&
+        attributes.map_state != IsUnmapped) {
+        Atom pid_atom = XInternAtom(display, "_NET_WM_PID", False);
+        Atom actual_type;
+        int actual_format;
+        unsigned long count, bytes_after;
+        unsigned char *value = NULL;
+        if (XGetWindowProperty(display, client, pid_atom, 0, 1, False,
+                               XA_CARDINAL, &actual_type, &actual_format,
+                               &count, &bytes_after, &value) == Success &&
+            value != NULL && actual_type == XA_CARDINAL &&
+            actual_format == 32 && count == 1) {
+            pid_t pid = (pid_t)((unsigned long *)value)[0];
+            if (pid > 1) {
+                kill(pid, SIGKILL);
+            }
+            XFree(value);
+        } else if (value != NULL) {
+            XFree(value);
+        }
+        XKillClient(display, client);
+        XFlush(display);
+    }
+    return G_SOURCE_REMOVE;
+}
+
 static gboolean recents_kill_after_timeout(gpointer data)
 {
     Window client = (Window)GPOINTER_TO_UINT(data);
@@ -537,10 +572,11 @@ static gboolean recents_kill_after_timeout(gpointer data)
                 kill(pid, SIGTERM);
             }
             XFree(value);
+            g_timeout_add(1000, recents_kill_force,
+                          GUINT_TO_POINTER((guint)client));
         } else if (value != NULL) {
             XFree(value);
         }
-        XKillClient(display, client);
         XFlush(display);
     }
     return G_SOURCE_REMOVE;
