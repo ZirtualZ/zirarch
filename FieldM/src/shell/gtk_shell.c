@@ -243,6 +243,23 @@ static void process_x_events(ShellState *state)
         } else if (event.type == ClientMessage &&
                    event.xclient.window == state->command_window &&
                    event.xclient.message_type == state->command_atom &&
+                   (event.xclient.data.l[0] == 7 ||
+                    event.xclient.data.l[0] == 8)) {
+            XClientMessageEvent message;
+            memset(&message, 0, sizeof(message));
+            message.type = ClientMessage;
+            message.window = DefaultRootWindow(state->xdisplay);
+            message.message_type = state->command_atom;
+            message.format = 32;
+            message.data.l[0] = event.xclient.data.l[0];
+            XSendEvent(state->xdisplay,
+                       DefaultRootWindow(state->xdisplay),
+                       False, SubstructureNotifyMask,
+                       (XEvent *)&message);
+            XFlush(state->xdisplay);
+        } else if (event.type == ClientMessage &&
+                   event.xclient.window == state->command_window &&
+                   event.xclient.message_type == state->command_atom &&
                    event.xclient.data.l[0] >= 3 &&
                    event.xclient.data.l[0] <= 5) {
             if (state->launcher != NULL) {

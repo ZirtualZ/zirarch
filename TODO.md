@@ -899,18 +899,21 @@ mystery freezes.
 
 **Status:** NetSurf/GTK is installed on the live ARMv7 target and is now
 recognized explicitly in FieldM browser launch/fallback logic. Browser
-windows are classified as text contexts so the on-screen keyboard can be
-started; launching no-URL NetSurf now supplies `about:blank` instead of
-exiting with `BadURL`. Fixed startup adoption for already-mapped browser
-windows so a restarted window manager cannot leave NetSurf unmanaged.
-Fixed browser URL argument ownership to avoid freeing a string literal.
-Added stale-client pruning and tracked app-child reaping. A live 30-second
-Browser geometry test passed with the shell PID unchanged and NetSurf
-framed within the 720x1280 work area. Browser windows are no longer
-misclassified as terminal text contexts, so opening Browser does not
-automatically cover the bottom of the screen with the on-screen keyboard.
-Direct open/close no longer leaves NetSurf zombies. Text-entry, scrolling,
-zoom, and URL navigation remain to be verified interactively.
+launching no-URL NetSurf supplies `about:blank` instead of exiting with
+`BadURL`. Browser frames use the normal full-area application geometry and
+do not open the keyboard automatically. Tapping inside Browser opens the
+manual keyboard lease; tapping outside Browser closes it.
+
+Physical navigation:
+- left hardware key: open the managed-app Recents switcher;
+- middle hardware key: close the focused app and return to FieldM Home;
+- right hardware key: send Back/Alt+Left to the focused app; a repeated
+  Back within one second closes the app if there is no prior menu/navigation.
+- WM title close controls are removed; application close is owned by the
+  physical middle button.
+
+Text-entry, URL navigation, scroll, zoom, and repeated hardware-key tests
+remain to be verified interactively.
 
 ## Step 11.3: Package manager polish
 

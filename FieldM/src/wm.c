@@ -46,6 +46,7 @@ typedef struct {
     int height;
     int fullscreen;
     int terminal;
+    int browser;
     int dialog;
 } ManagedWindow;
 
@@ -86,6 +87,7 @@ static int keyboard_height = DEFAULT_KEYBOARD_HEIGHT;
 static ScreenGeometry screen_layout;
 static int taskbar_enabled = 0;
 static int terminal_count;
+static unsigned long long back_pressed_at;
 
 static void show_switcher(void);
 static void draw_taskbar(void);
@@ -225,6 +227,19 @@ static void terminal_keyboard_command(const char *action)
     }
 }
 
+static void browser_keyboard_command(const char *action)
+{
+    pid_t child = fork();
+    if (child == 0) {
+        execl("/usr/bin/fieldm-keyboard", "fieldm-keyboard",
+              "manual", action, (char *)NULL);
+        _exit(127);
+    }
+    if (child < 0) {
+        perror("Could not run browser keyboard");
+    }
+}
+
 static void raise_keyboard_window(void)
 {
     if (keyboard_window != None) {
@@ -302,6 +317,73 @@ static int client_is_terminal(Window window)
         XFree(name);
     }
     return terminal;
+}
+
+static int client_is_browser(Window window)
+{
+    static const char *const names[] = {
+        "netsurf", "netsurf-gtk", "netsurf-bin", "chromium",
+        "google-chrome", "firefox", "librewolf", "epiphany"
+    };
+    XClassHint hint = {0};
+    int browser = 0;
+    if (XGetClassHint(display, window, &hint)) {
+        char *values[] = {hint.res_name, hint.res_class};
+        for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+            if (values[i] == NULL) continue;
+            for (size_t j = 0;
+                 j < sizeof(names) / sizeof(names[0]); ++j) {
+                const char *needle = names[j];
+                for (const char *cursor = values[i]; *cursor != '\0'; ++cursor) {
+                    const char *left = cursor;
+                    const char *right = needle;
+                    while (*left != '\0' && *right != '\0' &&
+                           tolower((unsigned char)*left) ==
+                               tolower((unsigned char)*right)) {
+                        ++left;
+                        ++right;
+                    }
+                    if (*right == '\0') {
+                        browser = 1;
+                        break;
+                    }
+                }
+                if (browser) break;
+            }
+            if (browser) break;
+        }
+        XFree(hint.res_name);
+        XFree(hint.res_class);
+    }
+    if (!browser) {
+        char *name = NULL;
+        if (XFetchName(display, window, &name) && name != NULL) {
+            for (size_t i = 0;
+                 i < sizeof(names) / sizeof(names[0]); ++i) {
+                char lower_name[256];
+                size_t length = strlen(name);
+                if (length >= sizeof(lower_name)) length = sizeof(lower_name)-1;
+                for (size_t j = 0; j < length; ++j) {
+                    lower_name[j] = (char)tolower((unsigned char)name[j]);
+                }
+                lower_name[length] = '\0';
+                char lower_name_match[64];
+                size_t match_length = strlen(names[i]);
+                if (match_length >= sizeof(lower_name_match)) continue;
+                for (size_t j = 0; j < match_length; ++j) {
+                    lower_name_match[j] =
+                        (char)tolower((unsigned char)names[i][j]);
+                }
+                lower_name_match[match_length] = '\0';
+                if (strstr(lower_name, lower_name_match) != NULL) {
+                    browser = 1;
+                    break;
+                }
+            }
+            XFree(name);
+        }
+    }
+    return browser;
 }
 
 static int text_matches_keyboard(const char *text)
@@ -399,10 +481,13 @@ static void sync_terminal_state(int index)
         return;
     }
     int terminal = client_is_terminal(clients[index].client);
-    if (terminal == clients[index].terminal) {
+    int browser = client_is_browser(clients[index].client);
+    if (terminal == clients[index].terminal &&
+        browser == clients[index].browser) {
         return;
     }
     clients[index].terminal = terminal;
+    clients[index].browser = browser;
     if (terminal) {
         if (terminal_count++ == 0) {
             terminal_keyboard_command("on");
@@ -542,6 +627,25 @@ static void send_launcher_command(void)
     XFlush(display);
 }
 
+static void send_desktop_command(long command)
+{
+    Atom owner_atom = XInternAtom(display, "_FIELD_DESKTOP_COMMAND_OWNER", False);
+    Atom command_atom = XInternAtom(display, "_FIELD_DESKTOP_COMMAND", False);
+    Window owner = XGetSelectionOwner(display, owner_atom);
+    if (owner == None) {
+        return;
+    }
+    XEvent message;
+    memset(&message, 0, sizeof(message));
+    message.xclient.type = ClientMessage;
+    message.xclient.window = owner;
+    message.xclient.message_type = command_atom;
+    message.xclient.format = 32;
+    message.xclient.data.l[0] = command;
+    XSendEvent(display, owner, False, NoEventMask, &message);
+    XFlush(display);
+}
+
 static void toggle_keyboard(void)
 {
     pid_t child = fork();
@@ -668,19 +772,6 @@ static void draw_frame(int index)
             XFree(name);
         }
 
-        draw_round_rect(managed->frame, managed->width - 64, 0, 64, 64, 4,
-                        index == focused ? close_color : button_color);
-        if (managed->terminal) {
-            draw_round_rect(managed->frame, managed->width - 128, 0, 64, 64, 4,
-                            index == focused ? accent_xft.pixel : button_color);
-            draw_text(managed->frame, "< >", managed->width - 118, 43,
-                      &text_xft, 48);
-        }
-        XSetForeground(display, gc, text_xft.pixel);
-        XDrawLine(display, managed->frame, gc, managed->width - 48, 16,
-                  managed->width - 16, 48);
-        XDrawLine(display, managed->frame, gc, managed->width - 16, 16,
-                  managed->width - 48, 48);
         XSetForeground(display, gc, outline_color);
         XDrawLine(display, managed->frame, gc, 0, title - 1,
                   managed->width + border, title - 1);
@@ -717,6 +808,9 @@ static void focus_client(int index)
     }
     focused = index;
     if (previous != index && previous >= 0 && previous < client_count) {
+        if (clients[previous].browser) {
+            browser_keyboard_command("off");
+        }
         maximize_client(previous, clients[previous].fullscreen);
     }
     maximize_client(index, clients[index].fullscreen);
@@ -880,6 +974,7 @@ static void manage_window(Window client)
     ManagedWindow *managed = &clients[index];
     managed->client = client;
     managed->terminal = 0;
+    managed->browser = 0;
     managed->fullscreen = client_has_state(
         client, "_NET_WM_STATE_FULLSCREEN");
     Window transient_for = None;
@@ -959,6 +1054,9 @@ static void forget_client(int index)
     int was_focused = focused == index;
     if (clients[index].terminal && --terminal_count == 0) {
         terminal_keyboard_command("off");
+    }
+    if (clients[index].browser) {
+        browser_keyboard_command("off");
     }
     XDestroyWindow(display, frame);
     for (int i = index; i + 1 < client_count; ++i) {
@@ -1128,6 +1226,76 @@ static void close_client(int index)
 static void close_focused(void)
 {
     close_client(focused);
+}
+
+static void close_focused_immediately(void)
+{
+    if (focused < 0 || focused >= client_count) {
+        browser_keyboard_command("off");
+        for (int i = 0; i < client_count; ++i) {
+            Window client = clients[i].client;
+            cancel_pending_close(client);
+            XKillClient(display, client);
+        }
+        XFlush(display);
+        return;
+    }
+    Window client = clients[focused].client;
+    cancel_pending_close(client);
+    browser_keyboard_command("off");
+    XKillClient(display, client);
+    XFlush(display);
+}
+
+static void send_key_to_focused(KeySym keysym)
+{
+    if (focused < 0 || focused >= client_count) {
+        return;
+    }
+    Window focus = clients[focused].client;
+    KeyCode keycode = XKeysymToKeycode(display, keysym);
+    XKeyEvent event;
+    memset(&event, 0, sizeof(event));
+    event.display = display;
+    event.window = focus;
+    event.root = root;
+    event.subwindow = None;
+    event.time = CurrentTime;
+    event.same_screen = True;
+    event.keycode = keycode;
+    event.type = KeyPress;
+    XSendEvent(display, focus, True, KeyPressMask, (XEvent *)&event);
+    event.type = KeyRelease;
+    XSendEvent(display, focus, True, KeyReleaseMask, (XEvent *)&event);
+    XFlush(display);
+}
+
+static void send_alt_left_to_focused(void)
+{
+    if (focused < 0 || focused >= client_count) {
+        return;
+    }
+    Window focus = clients[focused].client;
+    XKeyEvent event;
+    memset(&event, 0, sizeof(event));
+    event.display = display;
+    event.window = focus;
+    event.root = root;
+    event.subwindow = None;
+    event.time = CurrentTime;
+    event.same_screen = True;
+    event.state = Mod1Mask;
+    event.keycode = XKeysymToKeycode(display, XK_Alt_L);
+    event.type = KeyPress;
+    XSendEvent(display, focus, True, KeyPressMask, (XEvent *)&event);
+    event.keycode = XKeysymToKeycode(display, XK_Left);
+    event.type = KeyPress;
+    XSendEvent(display, focus, True, KeyPressMask, (XEvent *)&event);
+    event.type = KeyRelease;
+    XSendEvent(display, focus, True, KeyReleaseMask, (XEvent *)&event);
+    event.keycode = XKeysymToKeycode(display, XK_Alt_L);
+    XSendEvent(display, focus, True, KeyReleaseMask, (XEvent *)&event);
+    XFlush(display);
 }
 
 static void draw_taskbar_monitor(void)
@@ -1617,6 +1785,7 @@ int main(int argc, char **argv)
                     draw_taskbar();
                     publish_workarea();
                 } else if (command == 4) {
+                    browser_keyboard_command("off");
                     if (switcher_window != None) {
                         close_switcher();
                     } else {
@@ -1624,6 +1793,44 @@ int main(int argc, char **argv)
                     }
                 } else if (command == 5) {
                     send_launcher_command();
+                } else if (command == 7) {
+                    close_switcher();
+                    close_focused_immediately();
+                    send_desktop_command(3);
+                } else if (command == 8) {
+                    if (focused < 0 || focused >= client_count) {
+                        send_desktop_command(3);
+                        continue;
+                    }
+                    unsigned long long now = monotonic_ms();
+                    int browser = clients[focused].browser;
+                    char *name = NULL;
+                    int no_history = 0;
+                    if (browser &&
+                        XFetchName(display, clients[focused].client, &name) &&
+                        name != NULL) {
+                        no_history = strstr(name, "about:blank") != NULL;
+                        XFree(name);
+                    }
+                    if (browser && no_history) {
+                        back_pressed_at = 0;
+                        close_focused_immediately();
+                        send_desktop_command(3);
+                        continue;
+                    }
+                    if (back_pressed_at != 0 &&
+                        now - back_pressed_at < 1000) {
+                        back_pressed_at = 0;
+                        close_focused_immediately();
+                        send_desktop_command(3);
+                    } else {
+                        back_pressed_at = now;
+                        if (clients[focused].browser) {
+                            send_alt_left_to_focused();
+                        } else {
+                            send_key_to_focused(XK_Escape);
+                        }
+                    }
                 }
                 continue;
             }
@@ -1790,6 +1997,11 @@ int main(int argc, char **argv)
                 continue;
             }
             focus_client(index);
+            if (event.xbutton.button == Button1 &&
+                clients[index].browser &&
+                event.xbutton.window == clients[index].client) {
+                browser_keyboard_command("on");
+            }
             if (event.xbutton.window == clients[index].client) {
                 int alt_drag = (event.xbutton.state & Mod1Mask) != 0 &&
                                (event.xbutton.button == Button1 ||
@@ -1815,32 +2027,6 @@ int main(int argc, char **argv)
             int title_click = !clients[index].fullscreen &&
                 event.xbutton.window == clients[index].frame &&
                 event.xbutton.y < title_height(&clients[index]);
-            int close_click = title_click &&
-                event.xbutton.x >= clients[index].width - 64 &&
-                event.xbutton.x < clients[index].width;
-            int resize_click = title_click && clients[index].terminal &&
-                event.xbutton.x >= clients[index].width - 128 &&
-                event.xbutton.x < clients[index].width - 64;
-            if (close_click && event.xbutton.button == Button1) {
-                close_focused();
-                continue;
-            }
-            if (resize_click && event.xbutton.button == Button1) {
-                int next_width = 708;
-                if (clients[index].width >= 650) {
-                    next_width = 560;
-                } else if (clients[index].width >= 500) {
-                    next_width = 420;
-                } else if (clients[index].width >= 380) {
-                    next_width = 320;
-                }
-                clients[index].width = next_width - border_width(&clients[index]);
-                clients[index].x = screen_layout.x +
-                    (screen_layout.width - clients[index].width -
-                     border_width(&clients[index])) / 2;
-                arrange_client(index);
-                continue;
-            }
             int alt_drag = (event.xbutton.state & Mod1Mask) != 0 &&
                            (event.xbutton.button == Button1 ||
                             event.xbutton.button == Button3);
