@@ -8,4 +8,4 @@
 7. Browser/lock stale-process cause was identified and test PIDs removed; no image or partition write was performed.
 8. Remaining hardware-interactive checks: audio, vibration, sensors, cameras and 30-minute drain samples are untested.
 9. A cold-boot timing sample and rebuilt-image boot test are untested; no log_buf_len or cursor cmdline change was applied.
-10. Browser: singleton lock prevents duplicate launches; Menu → Close browser and Alt+Left on no history exit the PID. Recents close uses SIGTERM then SIGKILL after 1 s.
+10. Browser: singleton lock prevents duplicate launches; Menu → Close browser and Alt+Left on no history exit the PID. Recents close uses SIGTERM then SIGKILL after 1 s. PCManFM/Thunar/Nemo Back closes the active file-manager window and kills its PID; live PCManFM PID 5934 verified closed.

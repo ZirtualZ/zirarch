@@ -469,6 +469,7 @@ static int active_window_class(char *buffer, size_t size)
 
 static void send_show_desktop(void);
 static void send_home(void);
+static void send_close_active_window(void);
 
 static void context_back(void)
 {
@@ -503,6 +504,12 @@ static void context_back(void)
                     log_message("back action=home wm_class=%s", class_name);
                     return;
                 }
+                if (strcmp(action, "close") == 0) {
+                    fclose(table);
+                    send_close_active_window();
+                    log_message("back action=close wm_class=%s", class_name);
+                    return;
+                }
                 fclose(table);
                 send_escape_in_child();
                 log_message("back action=escape wm_class=%s", class_name);
@@ -514,6 +521,14 @@ static void context_back(void)
     if (is_browser_class(class_name)) {
         send_alt_left();
         log_message("back action=browser-back wm_class=%s", class_name);
+    } else if (strstr(class_name, "pcmanfm") != NULL ||
+               strstr(class_name, "Pcmanfm") != NULL ||
+               strstr(class_name, "thunar") != NULL ||
+               strstr(class_name, "Thunar") != NULL ||
+               strstr(class_name, "nemo") != NULL ||
+               strstr(class_name, "Nemo") != NULL) {
+        send_close_active_window();
+        log_message("back action=file-manager-close wm_class=%s", class_name);
     } else if (strstr(class_name, "xterm") != NULL ||
                strstr(class_name, "XTerm") != NULL ||
                strstr(class_name, "htop") != NULL ||
@@ -564,6 +579,70 @@ static void send_show_desktop(void)
 static void send_home(void)
 {
     send_show_desktop();
+}
+
+static void send_close_active_window(void)
+{
+    Display *display = persistent_x();
+    if (display == NULL) {
+        log_message("action=close ignored: X display unavailable");
+        return;
+    }
+    Atom active_atom = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long count, bytes_after;
+    unsigned char *value = NULL;
+    Window active = None;
+    pid_t pid = 0;
+    if (XGetWindowProperty(display, DefaultRootWindow(display),
+                           active_atom, 0, 1, False, XA_WINDOW,
+                           &actual_type, &actual_format,
+                           &count, &bytes_after, &value) == Success &&
+        value != NULL && actual_type == XA_WINDOW &&
+        actual_format == 32 && count == 1) {
+        active = ((Window *)value)[0];
+        XFree(value);
+        value = NULL;
+    }
+    if (active == None) {
+        log_message("action=close ignored: no active window");
+        return;
+    }
+    Atom pid_atom = XInternAtom(display, "_NET_WM_PID", False);
+    if (XGetWindowProperty(display, active, pid_atom, 0, 1, False,
+                           XA_CARDINAL, &actual_type, &actual_format,
+                           &count, &bytes_after, &value) == Success &&
+        value != NULL && actual_type == XA_CARDINAL &&
+        actual_format == 32 && count == 1) {
+        pid = (pid_t)((unsigned long *)value)[0];
+        XFree(value);
+        value = NULL;
+    }
+    XEvent event;
+    memset(&event, 0, sizeof(event));
+    event.xclient.type = ClientMessage;
+    event.xclient.window = active;
+    event.xclient.message_type =
+        XInternAtom(display, "_NET_CLOSE_WINDOW", False);
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = CurrentTime;
+    event.xclient.data.l[1] = 1;
+    XSendEvent(display, DefaultRootWindow(display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &event);
+    XFlush(display);
+    log_message("action=close-active window=%lu pid=%ld",
+                (unsigned long)active, (long)pid);
+    if (pid > 1) {
+        pid_t child = fork();
+        if (child == 0) {
+            sleep_ms(2000);
+            kill(pid, SIGTERM);
+            sleep_ms(1000);
+            kill(pid, SIGKILL);
+            _exit(0);
+        }
+    }
 }
 
 static void unlock_lock_screen(void)
