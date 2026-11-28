@@ -5,7 +5,9 @@
 typedef enum {
     WIFI_OPERATION_STATUS,
     WIFI_OPERATION_SCAN,
-    WIFI_OPERATION_CONNECT
+    WIFI_OPERATION_CONNECT,
+    WIFI_OPERATION_SAVED,
+    WIFI_OPERATION_FORGET
 } WifiOperation;
 
 typedef struct {
@@ -14,6 +16,7 @@ typedef struct {
     GtkWidget *result;
     GtkWidget *scan_button;
     GtkWidget *networks;
+    GtkWidget *saved_networks;
     GtkWidget *password_window;
     GtkWidget *password_entry;
     char *password_ssid;
@@ -168,6 +171,8 @@ static int wifi_populate_networks(WifiPageState *state, const char *output)
 
 static int wifi_run(WifiPageState *state, WifiOperation operation,
                     const char * const *arguments, const char *stdin_text);
+static void wifi_saved_refresh(WifiPageState *state);
+static void wifi_populate_saved(WifiPageState *state, const char *output);
 
 static void wifi_operation_finished(GObject *source, GAsyncResult *result,
                                     gpointer data)
@@ -214,6 +219,13 @@ static void wifi_operation_finished(GObject *source, GAsyncResult *result,
                                    ? output : "Wi-Fi status is unavailable.");
         }
         wifi_set_result(state, "Status refreshed.", 0);
+        wifi_saved_refresh(state);
+    } else if (operation == WIFI_OPERATION_SAVED) {
+        wifi_populate_saved(state, output);
+        wifi_set_result(state, "Saved networks refreshed.", 0);
+    } else if (operation == WIFI_OPERATION_FORGET) {
+        wifi_set_result(state, "Saved network forgotten.", 0);
+        wifi_saved_refresh(state);
     } else {
         wifi_set_result(state, output, 0);
         if (!state->destroyed) {
@@ -401,6 +413,63 @@ static void wifi_network_activated(GtkListBox *list, GtkListBoxRow *row,
     (void)list;
 }
 
+static void wifi_forget_clicked(GtkButton *button, gpointer data)
+{
+    WifiPageState *state = data;
+    const char *ssid = g_object_get_data(G_OBJECT(button), "ssid");
+    if (ssid == NULL || state->process != NULL) return;
+    char *ssid_copy = g_strdup(ssid);
+    const char *const arguments[] = {"/usr/bin/wifi", "forget", ssid_copy, NULL};
+    wifi_run(state, WIFI_OPERATION_FORGET, arguments, NULL);
+    g_free(ssid_copy);
+}
+
+static void wifi_populate_saved(WifiPageState *state, const char *output)
+{
+    if (state->destroyed || state->saved_networks == NULL) return;
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(state->saved_networks)) != NULL)
+        gtk_list_box_remove(GTK_LIST_BOX(state->saved_networks), child);
+    char **lines = g_strsplit(output != NULL ? output : "", "\n", -1);
+    int count = 0;
+    for (size_t i = 0; lines[i] != NULL; ++i) {
+        char **fields = g_strsplit(lines[i], "\t", 2);
+        if (g_strv_length(fields) >= 2 && fields[1][0] != '\0') {
+            GtkWidget *row = gtk_list_box_row_new();
+            GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+            GtkWidget *name = gtk_label_new(fields[1]);
+            gtk_label_set_xalign(GTK_LABEL(name), 0.0f);
+            gtk_widget_set_hexpand(name, TRUE);
+            GtkWidget *forget = gtk_button_new_with_label("Forget");
+            g_object_set_data_full(G_OBJECT(forget), "ssid",
+                                   g_strdup(fields[1]), g_free);
+            g_signal_connect(forget, "clicked",
+                             G_CALLBACK(wifi_forget_clicked), state);
+            gtk_box_append(GTK_BOX(box), name);
+            gtk_box_append(GTK_BOX(box), forget);
+            gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+            gtk_list_box_append(GTK_LIST_BOX(state->saved_networks), row);
+            ++count;
+        }
+        g_strfreev(fields);
+    }
+    g_strfreev(lines);
+    if (count == 0) {
+        GtkWidget *row = gtk_list_box_row_new();
+        GtkWidget *label = gtk_label_new("No saved networks.");
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), label);
+        gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+        gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+        gtk_list_box_append(GTK_LIST_BOX(state->saved_networks), row);
+    }
+}
+
+static void wifi_saved_refresh(WifiPageState *state)
+{
+    const char *const arguments[] = {"/usr/bin/wifi", "saved", NULL};
+    wifi_run(state, WIFI_OPERATION_SAVED, arguments, NULL);
+}
+
 GtkWidget *wifi_page_new(GtkWindow *parent)
 {
     WifiPageState *state = g_new0(WifiPageState, 1);
@@ -434,6 +503,15 @@ GtkWidget *wifi_page_new(GtkWindow *parent)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), networks);
+    GtkWidget *saved_heading = gtk_label_new("Saved networks");
+    gtk_widget_add_css_class(saved_heading, "title-3");
+    gtk_label_set_xalign(GTK_LABEL(saved_heading), 0.0f);
+    GtkWidget *saved_networks = gtk_list_box_new();
+    state->saved_networks = saved_networks;
+    GtkWidget *saved_scroll = gtk_scrolled_window_new();
+    gtk_widget_set_size_request(saved_scroll, -1, 160);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(saved_scroll),
+                                   saved_networks);
     GtkWidget *result = gtk_label_new("");
     state->result = result;
     gtk_label_set_xalign(GTK_LABEL(result), 0.0f);
@@ -445,6 +523,8 @@ GtkWidget *wifi_page_new(GtkWindow *parent)
     gtk_box_append(GTK_BOX(page), status);
     gtk_box_append(GTK_BOX(page), scan);
     gtk_box_append(GTK_BOX(page), scroll);
+    gtk_box_append(GTK_BOX(page), saved_heading);
+    gtk_box_append(GTK_BOX(page), saved_scroll);
     gtk_box_append(GTK_BOX(page), result);
     g_signal_connect(page, "destroy", G_CALLBACK(wifi_page_destroyed), state);
 

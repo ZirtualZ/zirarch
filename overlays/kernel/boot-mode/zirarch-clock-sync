@@ -15,7 +15,7 @@ if ! mkdir "$lock" 2>/dev/null; then
 fi
 trap 'rmdir "$lock" 2>/dev/null || true' EXIT HUP INT TERM
 
-printf '%s\n' not-synced > "$status"
+printf '%s\n' syncing > "$status"
 if /usr/bin/timeout 12 /usr/sbin/ntpdate -u -s time.cloudflare.com; then
 	epoch=$(/bin/date -u +%s)
 	case "$epoch" in
@@ -29,4 +29,5 @@ if /usr/bin/timeout 12 /usr/sbin/ntpdate -u -s time.cloudflare.com; then
 	exit 0
 fi
 
+printf '%s\n' not-synced > "$status"
 exit 0

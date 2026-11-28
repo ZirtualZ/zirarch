@@ -3,13 +3,17 @@ set -u
 
 interface=wlan0
 network_id=
+command_file=
 
 usage()
 {
 	echo "Usage:" >&2
 	echo "  wifi scan" >&2
-	echo "  wifi connect \"SSID\"" >&2
+	echo "  wifi connect \"SSID\" [password]" >&2
 	echo "  wifi connect --open \"SSID\"" >&2
+	echo "  wifi saved" >&2
+	echo "  wifi forget \"SSID\"" >&2
+	echo "  wifi reconnect" >&2
 	echo "  wifi status" >&2
 	exit "${1:-1}"
 }
@@ -20,8 +24,9 @@ fail()
 	exit 1
 }
 
-cleanup_failed_network()
+cleanup()
 {
+	[ -z "$command_file" ] || rm -f "$command_file"
 	[ -n "$network_id" ] &&
 		wpa_cli -i "$interface" remove_network "$network_id" >/dev/null 2>&1
 }
@@ -41,11 +46,11 @@ ensure_wifi()
 {
 	[ "$(id -u)" = 0 ] || fail "run as root"
 	[ -d "/sys/class/net/$interface" ] ||
-		fail "$interface is unavailable; run 'rc-service wifi-link start'"
+		fail "$interface is unavailable"
 	ip link set "$interface" up ||
 		fail "could not bring $interface up"
 	wpa_cli -i "$interface" status >/dev/null 2>&1 ||
-		fail "wpa_supplicant is not running; run 'rc-service wpa_supplicant start'"
+		fail "wpa_supplicant is not running"
 }
 
 scan_wifi()
@@ -58,11 +63,81 @@ scan_wifi()
 	echo "------  ------------  ------------------------------"
 	wpa_cli -i "$interface" scan_results |
 		awk -F '\t' 'NR > 1 {
-			security = ($4 == "[ESS]" ? "open" : $4)
+			signal=$3
+			security=($4 == "[ESS]" ? "open" : $4)
 			gsub(/^\[/, "", security)
 			gsub(/\].*$/, "", security)
-			printf "%6s  %-12s  %s\n", $3, security, $5
+			if (signal >= -55) bars="||||"
+			else if (signal >= -65) bars="|||"
+			else if (signal >= -75) bars="||"
+			else bars="|"
+			printf "%-4s  %-12s  %s\n", bars, security, $5
 		}'
+}
+
+saved_wifi()
+{
+	ensure_wifi
+	wpa_cli -i "$interface" list_networks |
+		awk -F '\t' 'NR > 1 && $2 != "" {
+			if (seen[$2]) print $1;
+			else seen[$2]=$1
+		}' |
+	while IFS= read -r duplicate; do
+		[ -n "$duplicate" ] &&
+			wpa_cli -i "$interface" remove_network "$duplicate" >/dev/null 2>&1
+	done
+	wpa_cli -i "$interface" save_config >/dev/null 2>&1 || :
+	wpa_cli -i "$interface" list_networks |
+		awk -F '\t' 'NR > 1 && $1 != "" && $2 != "" {
+			printf "%s\t%s\n", $1, $2
+		}'
+}
+
+forget_wifi()
+{
+	[ "$#" -eq 1 ] || usage 1
+	ensure_wifi
+	target=$1
+	found=
+	while IFS="$(printf '\t')" read -r id ssid flags; do
+		[ "$ssid" = "$target" ] || continue
+		check_ok "$(wpa_cli -i "$interface" remove_network "$id")" ||
+			fail "could not forget $target"
+		found=1
+	done <<EOF
+$(wpa_cli -i "$interface" list_networks | sed '1d')
+EOF
+	[ -n "$found" ] || fail "saved network not found"
+	check_ok "$(wpa_cli -i "$interface" save_config)" ||
+		fail "could not save Wi-Fi configuration"
+	echo "Forgot $target."
+}
+
+reconnect_wifi()
+{
+	ensure_wifi
+	check_ok "$(wpa_cli -i "$interface" reconnect)" ||
+		check_ok "$(wpa_cli -i "$interface" reassociate)" ||
+		fail "could not reconnect"
+}
+
+find_network_id()
+{
+	wpa_cli -i "$interface" list_networks |
+		awk -F '\t' -v target="$1" 'NR > 1 && $2 == target {print $1; exit}'
+}
+
+clean_duplicate_networks()
+{
+	ssid=$1
+	keep=$2
+	wpa_cli -i "$interface" list_networks |
+		awk -F '\t' -v target="$ssid" -v keep="$keep" \
+			'NR > 1 && $2 == target && $1 != keep {print $1}' |
+	while IFS= read -r duplicate; do
+		wpa_cli -i "$interface" remove_network "$duplicate" >/dev/null 2>&1
+	done
 }
 
 connect_wifi()
@@ -76,59 +151,65 @@ connect_wifi()
 	[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage 1
 	ssid=$1
 	[ -n "$ssid" ] || fail "SSID cannot be empty"
-
 	ensure_wifi
+
 	password=
 	if [ "$open_network" -eq 0 ]; then
 		if [ "$#" -eq 2 ]; then
 			password=$2
-			echo "wifi: password passed on the command line is visible to ps" >&2
 		else
-			printf 'Password for "%s" (empty to cancel): ' "$ssid" >&2
-			stty -echo 2>/dev/null || true
-			trap 'stty echo 2>/dev/null || true' HUP INT TERM EXIT
-			read -r password || {
-				stty echo 2>/dev/null || true
-				trap - HUP INT TERM EXIT
-				echo >&2
-				fail "cancelled"
-			}
-			stty echo 2>/dev/null || true
-			trap - HUP INT TERM EXIT
-			echo >&2
+			if [ -t 0 ]; then
+				printf 'Password for "%s": ' "$ssid" >&2
+				stty -echo 2>/dev/null || true
+			fi
+			IFS= read -r password || password=
+			if [ -t 0 ]; then stty echo 2>/dev/null || true; echo >&2; fi
 		fi
 		[ -n "$password" ] || fail "cancelled"
 		length=$(printf '%s' "$password" | wc -c)
-		[ "$length" -ge 8 ] && [ "$length" -le 63 ] ||
-			fail "WPA password must contain 8-63 characters"
+		case "$length" in
+			64)
+				printf '%s' "$password" | grep -Eq '^[0-9A-Fa-f]{64}$' ||
+					fail "64-character PSK must contain hexadecimal digits"
+				;;
+			*)
+				[ "$length" -ge 8 ] && [ "$length" -le 63 ] ||
+					fail "WPA password must contain 8-63 characters or 64 hex digits"
+				;;
+		esac
 	fi
 
-	trap 'cleanup_failed_network' EXIT INT TERM
-	network_id=$(wpa_cli -i "$interface" add_network 2>/dev/null)
-	case "$network_id" in
-		''|*[!0-9]*) fail "could not create Wi-Fi network" ;;
-	esac
-
-	check_ok "$(wpa_cli -i "$interface" set_network "$network_id" \
-		ssid "$(quote_wpa "$ssid")")" ||
-		fail "could not set SSID"
-
-	if [ "$open_network" -eq 1 ]; then
-		check_ok "$(wpa_cli -i "$interface" set_network "$network_id" \
-			key_mgmt NONE)" ||
-			fail "could not configure open network"
+	trap cleanup EXIT INT TERM
+	network_id=$(find_network_id "$ssid")
+	if [ -z "$network_id" ]; then
+		network_id=$(wpa_cli -i "$interface" add_network 2>/dev/null)
+		case "$network_id" in ''|*[!0-9]*) fail "could not create network" ;; esac
 	else
-		check_ok "$(wpa_cli -i "$interface" set_network "$network_id" \
-			psk "$(quote_wpa "$password")")" ||
-			fail "could not configure password"
+		clean_duplicate_networks "$ssid" "$network_id"
 	fi
 
-	check_ok "$(wpa_cli -i "$interface" enable_network "$network_id")" &&
-		check_ok "$(wpa_cli -i "$interface" select_network "$network_id")" ||
-		fail "could not select network"
+	command_file=$(mktemp /run/wifi-psk.XXXXXX)
+	chmod 600 "$command_file"
+	{
+		printf 'set_network %s ssid %s\n' "$network_id" "$(quote_wpa "$ssid")"
+		if [ "$open_network" -eq 1 ]; then
+			printf 'set_network %s key_mgmt NONE\n' "$network_id"
+		else
+			if [ "$length" -eq 64 ]; then
+				printf 'set_network %s psk %s\n' "$network_id" "$password"
+			else
+				printf 'set_network %s psk %s\n' "$network_id" "$(quote_wpa "$password")"
+			fi
+		fi
+		printf 'enable_network %s\n' "$network_id"
+		printf 'select_network %s\n' "$network_id"
+	} >"$command_file"
 
-	echo "Connecting to $ssid..."
+	wpa_cli -i "$interface" <"$command_file" >/dev/null ||
+		fail "could not configure network"
+
 	remaining=20
+	state=
 	while [ "$remaining" -gt 0 ]; do
 		state=$(wpa_cli -i "$interface" status 2>/dev/null |
 			sed -n 's/^wpa_state=//p')
@@ -142,36 +223,33 @@ connect_wifi()
 	check_ok "$(wpa_cli -i "$interface" save_config)" ||
 		fail "connected, but could not save the network"
 	network_id=
-	trap - EXIT INT TERM
+	rm -f "$command_file"
+	command_file=
 
 	echo "Connected. Requesting DHCP lease..."
-	if command -v udhcpc >/dev/null 2>&1; then
+	if command -v timeout >/dev/null 2>&1 && command -v dhclient >/dev/null 2>&1; then
+		timeout 20 dhclient -1 "$interface"
+	elif command -v udhcpc >/dev/null 2>&1; then
 		udhcpc -q -n -i "$interface" -t 3 -T 3
 	elif command -v dhclient >/dev/null 2>&1; then
-		dhclient -v "$interface"
+		timeout 20 dhclient -1 "$interface"
 	else
 		fail "no DHCP client is installed"
 	fi ||
-		fail "connected, but DHCP did not obtain a lease"
+		fail "DHCP did not obtain a lease"
 	[ ! -x /usr/bin/zirarch-clock-sync ] ||
 		/usr/bin/zirarch-clock-sync --async
 	echo "Wi-Fi ready."
+	trap - EXIT INT TERM
 }
 
 case "${1:-}" in
 	-h|--help) usage 0 ;;
-	scan)
-		[ "$#" -eq 1 ] || usage 1
-		scan_wifi
-		;;
-	connect)
-		shift
-		connect_wifi "$@"
-		;;
-	status)
-		[ "$#" -eq 1 ] || usage 1
-		ensure_wifi
-		wpa_cli -i "$interface" status
-		;;
+	scan) [ "$#" -eq 1 ] || usage 1; scan_wifi ;;
+	saved) [ "$#" -eq 1 ] || usage 1; saved_wifi ;;
+	forget) shift; forget_wifi "$@" ;;
+	reconnect) [ "$#" -eq 1 ] || usage 1; reconnect_wifi ;;
+	connect) shift; connect_wifi "$@" ;;
+	status) [ "$#" -eq 1 ] || usage 1; ensure_wifi; wpa_cli -i "$interface" status ;;
 	*) usage 1 ;;
 esac
