@@ -13,7 +13,10 @@ DESTDIR ?=
 
 .PHONY: all clean install check-gtk check-applications
 
-all: simple-desktop fieldm-packages fieldm-keys fieldm-kbd
+all: simple-desktop fieldm-packages fieldm-keys fieldm-kbd fieldm-lock
+
+GTK3_CFLAGS = $(shell $(PKG_CONFIG) --cflags gtk+-3.0 webkit2gtk-4.1 2>/dev/null)
+GTK3_LIBS = $(shell $(PKG_CONFIG) --libs gtk+-3.0 webkit2gtk-4.1 2>/dev/null)
 
 DESKTOP_SOURCES = src/desktop.c src/applications.c src/theme.c \
 	src/appearance.c src/screen_layout.c src/shell/session.c \
@@ -55,11 +58,21 @@ fieldm-kbd: src/fieldm-kbd.c src/theme.c src/theme.h
 	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ src/fieldm-kbd.c src/theme.c \
 		$(LDLIBS) $(XFT_LIBS) -lXtst
 
-install: all
+fieldm-lock: src/fieldm-lock.c
+	$(CC) $(CFLAGS) $(shell $(PKG_CONFIG) --cflags gtk+-3.0) -std=c11 -o $@ src/fieldm-lock.c \
+		$(LDLIBS) $(shell $(PKG_CONFIG) --libs gtk+-3.0)
+
+fieldm-browser: src/fieldm-browser.c
+	$(CC) $(CFLAGS) $(GTK3_CFLAGS) -std=c11 -o $@ src/fieldm-browser.c \
+		$(LDLIBS) $(GTK3_LIBS)
+
+install: all fieldm-browser
 	install -Dm755 simple-desktop "$(DESTDIR)$(BINDIR)/simple-desktop"
 	install -Dm755 fieldm-packages "$(DESTDIR)$(BINDIR)/fieldm-packages"
 	install -Dm755 fieldm-keys "$(DESTDIR)$(BINDIR)/fieldm-keys"
 	install -Dm755 fieldm-kbd "$(DESTDIR)$(BINDIR)/fieldm-kbd"
+	install -Dm755 fieldm-browser "$(DESTDIR)$(BINDIR)/fieldm-browser"
+	install -Dm755 fieldm-lock "$(DESTDIR)$(BINDIR)/fieldm-lock"
 	install -Dm644 data/fieldm.css "$(DESTDIR)/usr/share/fieldm/fieldm.css"
 	install -Dm755 scripts/fieldm-hwprobe \
 		"$(DESTDIR)/usr/lib/fieldm/hwprobe"
@@ -71,4 +84,4 @@ install: all
 		"$(DESTDIR)/usr/share/applications/packages.desktop"
 
 clean:
-	rm -f simple-desktop fieldm-packages fieldm-keys fieldm-kbd
+	rm -f simple-desktop fieldm-packages fieldm-keys fieldm-kbd fieldm-browser fieldm-lock

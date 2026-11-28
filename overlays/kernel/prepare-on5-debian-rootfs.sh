@@ -92,12 +92,12 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	wpasupplicant iw iproute2 isc-dhcp-client
 	xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-evdev
 	xinit x11-xserver-utils x11-utils dbus dbus-x11
-	libgtk-4-dev libx11-dev libxft-dev libxtst-dev pkg-config build-essential
+	libgtk-4-dev libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev libxft-dev libxtst-dev pkg-config build-essential
 	matchbox-window-manager \
 	at-spi2-core python3-pyatspi libatk-adaptor \
 	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
-	ntpsec-ntpdate fake-hwclock util-linux-extra vimb \
+	ntpsec-ntpdate fake-hwclock util-linux-extra pcmanfm xclip scrot \
 	haveged e2fsprogs ca-certificates nano"
 
 chroot "$ROOT_DIR" /usr/bin/env \
@@ -146,6 +146,8 @@ chroot "$ROOT_DIR" /usr/bin/make -C /usr/src/zirarch/FieldM clean
 chroot "$ROOT_DIR" /usr/bin/make -C /usr/src/zirarch/FieldM -j2
 chroot "$ROOT_DIR" /usr/bin/make -C /usr/src/zirarch/FieldM \
 	check-applications
+chroot "$ROOT_DIR" /usr/bin/make -C /usr/src/zirarch/FieldM fieldm-browser
+chroot "$ROOT_DIR" /usr/bin/make -C /usr/src/zirarch/FieldM fieldm-lock
 chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
 	/usr/bin/zirarch-fbconsole /usr/src/zirarch/fbconsole/fbconsole.c
 chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
@@ -158,6 +160,10 @@ install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-keys" \
 	"$ROOT_DIR/usr/bin/fieldm-keys"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-kbd" \
 	"$ROOT_DIR/usr/bin/fieldm-kbd"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-browser" \
+	"$ROOT_DIR/usr/bin/fieldm-browser"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-lock" \
+	"$ROOT_DIR/usr/bin/fieldm-lock"
 install -m 644 "$PROJECT_DIR/FieldM/data/fieldm.css" \
 	"$ROOT_DIR/usr/share/fieldm/fieldm.css"
 
@@ -183,6 +189,18 @@ chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
 	/usr/src/zirarch/fieldm-hide-keyboard.c
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-terminal" \
 	"$ROOT_DIR/usr/bin/fieldm-terminal"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-logs.initd" \
+	"$ROOT_DIR/etc/init.d/fieldm-logs"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-notify" \
+	"$ROOT_DIR/usr/bin/fieldm-notify"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-power" \
+	"$ROOT_DIR/usr/bin/zirarch-power"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-battery" \
+	"$ROOT_DIR/usr/bin/zirarch-battery"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-battery.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-battery"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-power.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-power"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-early-boot.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-early-boot"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-haveged.initd" \
@@ -196,8 +214,6 @@ install -m 755 "$KERNEL_DIR/boot-mode/zirarch-clock-sync.initd" \
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-clock.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-clock"
 mkdir -p "$ROOT_DIR/etc/fieldm"
-install -m 644 "$KERNEL_DIR/boot-mode/vimb.conf" \
-	"$ROOT_DIR/etc/fieldm/vimb.conf"
 install -m 644 "$PROJECT_DIR/FieldM/terminal.desktop" \
 	"$ROOT_DIR/usr/share/applications/terminal.desktop"
 install -m 644 "$KERNEL_DIR/boot-mode/zirarch-browser.desktop" \
@@ -431,6 +447,11 @@ depend()
 	need wifi-link
 	after wifi-link
 }
+start_post()
+{
+	[ ! -x /usr/bin/wifi ] ||
+		nohup /usr/bin/wifi reconnect >/dev/null 2>&1 &
+}
 EOF
 chmod 755 "$ROOT_DIR/etc/init.d/wpa-supplicant-zirarch"
 
@@ -496,6 +517,7 @@ for service in dmesg procfs sysfs zirarch-early-boot zirarch-haveged; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" sysinit
 done
+chroot "$ROOT_DIR" /sbin/rc-update add fieldm-logs sysinit
 chroot "$ROOT_DIR" /sbin/rc-update add zirarch-clock sysinit
 chroot "$ROOT_DIR" /sbin/rc-update del udev sysinit 2>/dev/null || true
 chroot "$ROOT_DIR" /sbin/rc-update del udev-trigger sysinit 2>/dev/null || true
@@ -503,6 +525,7 @@ for service in bootmisc hostname hwclock fake-hwclock localmount modules root sy
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" boot
 done
+chroot "$ROOT_DIR" /sbin/rc-update add zirarch-power boot
 for runlevel in $(find "$ROOT_DIR/etc/runlevels" -mindepth 1 -maxdepth 1 \
 	-type d -printf '%f '); do
 	chroot "$ROOT_DIR" /sbin/rc-update del ssh "$runlevel" 2>/dev/null || true
@@ -512,7 +535,7 @@ for runlevel in $(find "$ROOT_DIR/etc/runlevels" -mindepth 1 -maxdepth 1 \
 done
 for service in networking dbus elogind zramswap usb-rndis \
 	zirarch-clock-sync zirarch-sshd wifi-link \
-	wpa-supplicant-zirarch zirarch-boot-mode; do
+	wpa-supplicant-zirarch zirarch-boot-mode zirarch-battery; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] ||
 		die "required OpenRC service is missing: $service"
 	chroot "$ROOT_DIR" /sbin/rc-update add "$service" default

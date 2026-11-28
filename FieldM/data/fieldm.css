@@ -252,17 +252,25 @@ progressbar progress, scale highlight {
   color: #111111;
 }
 
-.app-grid-button:hover, .app-grid-button:active, .app-grid-button:checked,
+.app-grid-button:hover, .app-grid-button:active, .app-grid-button:checked {
+  background: #111111;
+  color: #F4F1EA;
+}
+
 .app-grid-button:focus {
-  background: #E2DDD2;
+  background: #F4F1EA;
   color: #111111;
 }
 
 .app-grid-button:hover label, .app-grid-button:active label,
-.app-grid-button:checked label, .app-grid-button:focus label,
+.app-grid-button:checked label,
 .app-grid-button:hover .app-icon-letter,
 .app-grid-button:active .app-icon-letter,
-.app-grid-button:checked .app-icon-letter,
+.app-grid-button:checked .app-icon-letter {
+  color: #F4F1EA;
+}
+
+.app-grid-button:focus label,
 .app-grid-button:focus .app-icon-letter {
   color: #111111;
 }

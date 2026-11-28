@@ -344,7 +344,7 @@ size_t applications_load(Application *applications, size_t capacity)
         int browser_alias =
             strstr(name, "browser") != NULL ||
             strstr(name, "netsurf") != NULL ||
-            strstr(name, "vimb") != NULL ||
+            strstr(name, "fieldm-browser") != NULL ||
             strstr(name, "surf") != NULL ||
             strstr(name, "firefox") != NULL ||
             strstr(name, "chromium") != NULL ||
@@ -758,7 +758,7 @@ static int known_kind_executable(const Application *application,
                                  ApplicationKind kind)
 {
     static const char *const browsers[] = {
-        "vimb", "surf", "epiphany", "firefox", "firefox-esr",
+        "fieldm-browser", "surf", "epiphany", "firefox", "firefox-esr",
         "chromium", "chromium-browser", "google-chrome", "brave", "librewolf",
         "netsurf-gtk", "netsurf"
     };
@@ -783,7 +783,7 @@ static int known_kind_executable(const Application *application,
 static int launch_fallback(ApplicationKind kind)
 {
     static const char *const browsers[] = {
-        "vimb", "surf", "epiphany", "firefox", "firefox-esr",
+        "fieldm-browser", "surf", "epiphany", "firefox", "firefox-esr",
         "chromium", "chromium-browser", "google-chrome", "brave", "librewolf",
         "netsurf-gtk", "netsurf"
     };
@@ -839,7 +839,7 @@ int applications_kind_available(const Application *applications, size_t count,
     }
 
     static const char *const browsers[] = {
-        "vimb", "surf", "epiphany", "firefox", "firefox-esr",
+        "fieldm-browser", "surf", "epiphany", "firefox", "firefox-esr",
         "chromium", "chromium-browser", "google-chrome", "brave", "librewolf",
         "netsurf-gtk", "netsurf"
     };
@@ -863,13 +863,6 @@ int applications_launch_kind(const Application *applications, size_t count,
 {
     const char *category = kind == APPLICATION_BROWSER
         ? "WebBrowser" : "FileManager";
-    for (size_t i = 0; i < count; ++i) {
-        if (kind == APPLICATION_BROWSER &&
-            strstr(applications[i].exec, "vimb") != NULL) {
-            return application_launch_with_catalog(&applications[i],
-                                                   applications, count);
-        }
-    }
     for (size_t i = 0; i < count; ++i) {
         if (kind == APPLICATION_BROWSER &&
             (strstr(applications[i].exec, "/zirarch-browser") != NULL ||

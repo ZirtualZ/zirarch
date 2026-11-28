@@ -2,4 +2,4 @@
 
 export GTK_A11Y="${GTK_A11Y:-1}"
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
-exec /usr/bin/vimb --config /etc/fieldm/vimb.conf "$@"
+exec /usr/bin/fieldm-browser "$@"
