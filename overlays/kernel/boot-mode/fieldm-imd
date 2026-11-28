@@ -63,8 +63,10 @@ def is_editable(event):
         pass
     try:
         role = source.getRole()
-        role_name = str(role).lower()
-        if "entry" in role_name or "text" in role_name or "password" in role_name:
+        role_name = str(role).upper()
+        if role_name == "ROLE_TERMINAL" or role_name == "ROLE_PASSWORD_TEXT":
+            return True
+        if role == pyatspi.ROLE_TERMINAL or role == pyatspi.ROLE_PASSWORD_TEXT:
             return True
     except Exception:
         pass
