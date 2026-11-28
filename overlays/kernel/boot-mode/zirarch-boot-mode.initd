@@ -14,6 +14,17 @@ stop()
 {
 	rc-service buffyboard stop 2>/dev/null || true
 	start-stop-daemon --stop --pidfile /run/zirarch-tty1.pid 2>/dev/null || true
+	start-stop-daemon --stop --name zirarch-fbconsole 2>/dev/null || true
+	rc-service zirarch-x11-refresh stop 2>/dev/null || true
+	pkill -TERM -x simple-desktop 2>/dev/null || true
+	pkill -TERM -x simple-wm 2>/dev/null || true
+	pkill -TERM -x fieldm-kbd 2>/dev/null || true
+	pkill -TERM -x Xorg 2>/dev/null || true
+	sleep 1
+	pkill -KILL -x simple-desktop 2>/dev/null || true
+	pkill -KILL -x simple-wm 2>/dev/null || true
+	pkill -KILL -x fieldm-kbd 2>/dev/null || true
+	pkill -KILL -x Xorg 2>/dev/null || true
 	if [ -s /run/fieldm-desktop.pid ]; then
 		desktop_pid=$(cat /run/fieldm-desktop.pid)
 		case "$desktop_pid" in

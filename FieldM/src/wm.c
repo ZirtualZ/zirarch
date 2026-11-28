@@ -1230,20 +1230,43 @@ static void close_focused(void)
 
 static void close_focused_immediately(void)
 {
-    if (focused < 0 || focused >= client_count) {
+    int index = focused;
+    Window input_focus = None;
+    int revert = 0;
+    if (XGetInputFocus(display, &input_focus, &revert) == Success) {
+        int focus_index = find_client(input_focus);
+        if (focus_index >= 0) {
+            index = focus_index;
+        }
+    }
+    if (index < 0 || index >= client_count) {
         browser_keyboard_command("off");
         for (int i = 0; i < client_count; ++i) {
-            Window client = clients[i].client;
-            cancel_pending_close(client);
-            XKillClient(display, client);
+            if (clients[i].browser) {
+                index = i;
+                break;
+            }
         }
-        XFlush(display);
+        if (index < 0 || index >= client_count) {
+            index = client_count > 0 ? 0 : -1;
+        }
+    }
+    if (index < 0 || index >= client_count) {
+        unlink("/run/fieldm-keyboard/manual");
+        unlink("/run/fieldm-keyboard/entry");
+        unlink("/run/fieldm-keyboard/terminal");
+        browser_keyboard_command("off");
         return;
     }
-    Window client = clients[focused].client;
+    Window client = clients[index].client;
     cancel_pending_close(client);
     browser_keyboard_command("off");
+    unlink("/run/fieldm-keyboard/manual");
+    if (clients[index].terminal) {
+        unlink("/run/fieldm-keyboard/terminal");
+    }
     XKillClient(display, client);
+    XSync(display, False);
     XFlush(display);
 }
 

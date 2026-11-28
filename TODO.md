@@ -155,6 +155,10 @@ loop.
 **Status:** Implemented bounded restart, recovery state, component-specific
 restart, PID/exit logging, and 5-failure/300-second limits. Live fault
 injection remains open.
+The session supervisor was collapsed to one X session owner, one desktop
+launcher owner, and one boot-mode loop. Console recovery stops Xorg and
+the x11 refresh helper before framebuffer console execution, preventing
+console and FieldM rendering from overlapping.
 
 ## Step 1.2: Harden `fieldm-keys`
 
@@ -911,6 +915,12 @@ Physical navigation:
   Back within one second closes the app if there is no prior menu/navigation.
 - WM title close controls are removed; application close is owned by the
   physical middle button.
+- Browser tap opens the manual keyboard; tapping outside Browser hides it.
+
+**Status:** Live browser open/tap/close smoke passed: Browser remains
+full-area, a manual lease opens on text taps, middle close removes the
+browser and keyboard lease, and X/FieldM remain running. Recents and
+Back navigation are wired through the WM command protocol.
 
 Text-entry, URL navigation, scroll, zoom, and repeated hardware-key tests
 remain to be verified interactively.
