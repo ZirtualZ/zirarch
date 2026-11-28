@@ -19,8 +19,8 @@ grep -q 'clamp_managed_geometry' src/wm.c ||
 	{ echo "WM geometry clamping helper is missing" >&2; exit 1; }
 grep -q 'publish_workarea' src/wm.c ||
 	{ echo "WM workarea publisher is missing" >&2; exit 1; }
-grep -q 'client_is_browser' src/wm.c ||
-	{ echo "Browser text-context classification is missing" >&2; exit 1; }
+grep -q 'client_is_terminal' src/wm.c ||
+	{ echo "Terminal text-context classification is missing" >&2; exit 1; }
 
 make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)" simple-wm
 echo "Window manager storage checks passed."

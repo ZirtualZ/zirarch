@@ -520,6 +520,16 @@ static int build_arguments(const Application *application, char **arguments,
 
 static int launch_arguments(char **arguments, const char *display_size)
 {
+    for (size_t i = 0; arguments[i] != NULL; ++i) {
+        if (strcmp(arguments[i], "netsurf-gtk") == 0 ||
+            strcmp(arguments[i], "netsurf") == 0) {
+            setenv("GDK_BACKEND", "x11", 1);
+            setenv("GDK_GL", "0", 1);
+            setenv("GSK_RENDERER", "cairo", 1);
+            setenv("GTK_A11Y", "none", 1);
+            break;
+        }
+    }
     pid_t child = fork();
     if (child == 0) {
         const char *scale = strcmp(display_size != NULL ? display_size : "normal",

@@ -905,10 +905,12 @@ exiting with `BadURL`. Fixed startup adoption for already-mapped browser
 windows so a restarted window manager cannot leave NetSurf unmanaged.
 Fixed browser URL argument ownership to avoid freeing a string literal.
 Added stale-client pruning and tracked app-child reaping. A live 30-second
-Browser stability test passed with the shell PID unchanged and NetSurf
-framed within the 720x1280 work area; direct open/close no longer leaves
-NetSurf zombies. Text-entry, scrolling, zoom, and URL navigation remain to be
-verified interactively.
+Browser geometry test passed with the shell PID unchanged and NetSurf
+framed within the 720x1280 work area. Browser windows are no longer
+misclassified as terminal text contexts, so opening Browser does not
+automatically cover the bottom of the screen with the on-screen keyboard.
+Direct open/close no longer leaves NetSurf zombies. Text-entry, scrolling,
+zoom, and URL navigation remain to be verified interactively.
 
 ## Step 11.3: Package manager polish
 
