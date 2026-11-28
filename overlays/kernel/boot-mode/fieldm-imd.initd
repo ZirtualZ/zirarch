@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+
+description="AT-SPI text-focus keyboard daemon"
+command="/usr/bin/fieldm-imd"
+command_background=true
+pidfile="/run/fieldm-imd.pid"
+
+depend()
+{
+	after dbus
+}

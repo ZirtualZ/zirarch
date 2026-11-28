@@ -1,0 +1,115 @@
+#!/usr/bin/python3
+
+import os
+import subprocess
+import threading
+import time
+
+import pyatspi
+
+LOG = "/var/log/fieldm-imd.log"
+STATE = "/run/fieldm-keyboard"
+DEBOUNCE_SECONDS = 0.15
+
+lock = threading.Lock()
+pending_editable = None
+pending_at = 0.0
+last_editable = None
+
+
+def log_message(message):
+    try:
+        size = os.path.getsize(LOG) if os.path.exists(LOG) else 0
+        if size > 1048576:
+            os.replace(LOG, LOG + ".1")
+        with open(LOG, "a", buffering=1) as log:
+            log.write(message + "\n")
+    except OSError:
+        pass
+
+
+def manual_keyboard_active():
+    return os.path.exists(os.path.join(STATE, "manual"))
+
+
+def set_keyboard(editable):
+    action = "on" if editable else "off"
+    if not editable and manual_keyboard_active():
+        log_message("focus=noneditable action=ignore-reason=manual-lease")
+        return
+    try:
+        subprocess.run(
+            ["/usr/bin/fieldm-keyboard", "entry", action],
+            timeout=2,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        log_message("focus=%s action=keyboard-%s" %
+                    ("editable" if editable else "noneditable", action))
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log_message("focus action=%s failed=%s" % (action, error))
+
+
+def is_editable(event):
+    source = getattr(event, "source", None)
+    if source is None:
+        return False
+    try:
+        state = source.getState()
+        if hasattr(state, "contains") and state.contains(pyatspi.STATE_EDITABLE):
+            return True
+    except Exception:
+        pass
+    try:
+        role = source.getRole()
+        role_name = str(role).lower()
+        if "entry" in role_name or "text" in role_name or "password" in role_name:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def on_focus(event):
+    global pending_editable, pending_at
+    editable = bool(getattr(event, "detail1", False)) and is_editable(event)
+    if getattr(event, "detail1", False) is False:
+        editable = False
+    now = time.monotonic()
+    with lock:
+        pending_editable = editable
+        pending_at = now + DEBOUNCE_SECONDS
+
+
+def apply_pending():
+    global pending_editable, pending_at, last_editable
+    while True:
+        now = time.monotonic()
+        editable = None
+        with lock:
+            if pending_editable is not None and now >= pending_at:
+                editable = pending_editable
+                pending_editable = None
+        if editable is not None and editable != last_editable:
+            last_editable = editable
+            set_keyboard(editable)
+        time.sleep(0.025)
+
+
+def main():
+    log_message("fieldm-imd started")
+    worker = threading.Thread(target=apply_pending, daemon=True)
+    worker.start()
+    pyatspi.Registry.registerEventListener(
+        on_focus, "object:state-changed:focused")
+    try:
+        pyatspi.Registry.start()
+    finally:
+        pyatspi.Registry.unregisterEventListener(
+            on_focus, "object:state-changed:focused")
+        log_message("fieldm-imd stopped")
+
+
+if __name__ == "__main__":
+    main()

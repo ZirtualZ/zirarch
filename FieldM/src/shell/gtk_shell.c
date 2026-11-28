@@ -192,55 +192,6 @@ int shell_keyboard_command(const char *lease, const char *action)
     return 1;
 }
 
-typedef struct {
-    ShellState *state;
-    Window client;
-} CloseTimeout;
-
-static gboolean close_timeout(gpointer data)
-{
-    CloseTimeout *timeout = data;
-    XWindowAttributes attributes;
-    if (timeout != NULL && timeout->state != NULL &&
-        XGetWindowAttributes(timeout->state->xdisplay,
-                             timeout->client, &attributes) &&
-        attributes.map_state != IsUnmapped) {
-        XKillClient(timeout->state->xdisplay, timeout->client);
-        XFlush(timeout->state->xdisplay);
-    }
-    g_free(timeout);
-    return G_SOURCE_REMOVE;
-}
-
-static Window active_window(ShellState *state)
-{
-    Atom active_atom = XInternAtom(state->xdisplay,
-                                   "_NET_ACTIVE_WINDOW", False);
-    Atom actual_type;
-    int actual_format;
-    unsigned long count;
-    unsigned long bytes_after;
-    unsigned char *value = NULL;
-    Window active = None;
-    if (XGetWindowProperty(state->xdisplay,
-                           DefaultRootWindow(state->xdisplay),
-                           active_atom, 0, 1, False, XA_WINDOW,
-                           &actual_type, &actual_format, &count,
-                           &bytes_after, &value) == Success &&
-        value != NULL && actual_type == XA_WINDOW &&
-        actual_format == 32 && count == 1) {
-        active = *(Window *)value;
-    }
-    if (value != NULL) XFree(value);
-    if (active == None) {
-        Window focus = None;
-        int revert = 0;
-        XGetInputFocus(state->xdisplay, &focus, &revert);
-        if (focus != None && focus != PointerRoot) active = focus;
-    }
-    return active;
-}
-
 static void show_desktop(ShellState *state)
 {
     if (state->recents != NULL) recents_close(state);
@@ -268,51 +219,6 @@ static void show_desktop(ShellState *state)
         }
     }
     XFlush(state->xdisplay);
-}
-
-static void close_active_client(ShellState *state)
-{
-    Window client = active_window(state);
-    if (client == None) {
-        show_desktop(state);
-        return;
-    }
-    Atom protocols = XInternAtom(state->xdisplay, "WM_PROTOCOLS", False);
-    Atom delete_window =
-        XInternAtom(state->xdisplay, "WM_DELETE_WINDOW", False);
-    Atom *supported = NULL;
-    int protocol_count = 0;
-    int supports_delete =
-        XGetWMProtocols(state->xdisplay, client,
-                        &supported, &protocol_count);
-    int found = 0;
-    for (int i = 0; supports_delete && i < protocol_count; ++i) {
-        if (supported[i] == delete_window) {
-            found = 1;
-            break;
-        }
-    }
-    if (supported != NULL) XFree(supported);
-    if (found) {
-        XEvent event;
-        memset(&event, 0, sizeof(event));
-        event.xclient.type = ClientMessage;
-        event.xclient.window = client;
-        event.xclient.message_type = protocols;
-        event.xclient.format = 32;
-        event.xclient.data.l[0] = (long)delete_window;
-        event.xclient.data.l[1] = CurrentTime;
-        XSendEvent(state->xdisplay, client, False, NoEventMask,
-                   (XEvent *)&event);
-    } else {
-        XKillClient(state->xdisplay, client);
-    }
-    XFlush(state->xdisplay);
-    CloseTimeout *timeout = g_new0(CloseTimeout, 1);
-    timeout->state = state;
-    timeout->client = client;
-    g_timeout_add(3000, close_timeout, timeout);
-    show_desktop(state);
 }
 
 static void process_x_events(ShellState *state)
@@ -361,11 +267,6 @@ static void process_x_events(ShellState *state)
                    event.xclient.message_type == state->command_atom &&
                    event.xclient.data.l[0] == 3) {
             show_desktop(state);
-        } else if (event.type == ClientMessage &&
-                   event.xclient.window == state->command_window &&
-                   event.xclient.message_type == state->command_atom &&
-                   event.xclient.data.l[0] == 7) {
-            close_active_client(state);
         } else if (event.type == ClientMessage &&
                    event.xclient.window == state->command_window &&
                    event.xclient.message_type == state->command_atom &&

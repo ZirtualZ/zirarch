@@ -49,7 +49,7 @@ fieldm-packages: src/packages.c
 		$(LDLIBS) $(GTK_LIBS)
 
 fieldm-keys: src/fieldm-keys.c
-	$(CC) $(CFLAGS) -std=c11 -o $@ src/fieldm-keys.c $(LDLIBS)
+	$(CC) $(CFLAGS) -std=c11 -o $@ src/fieldm-keys.c $(LDLIBS) -lXtst
 
 fieldm-kbd: src/fieldm-kbd.c src/theme.h
 	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ src/fieldm-kbd.c \

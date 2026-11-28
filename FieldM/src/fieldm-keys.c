@@ -2,6 +2,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 
 #include <dirent.h>
@@ -51,6 +52,10 @@ static int power_suppressed;
 static int volume_up_suppressed;
 static unsigned long long power_pressed_at;
 static unsigned long long combo_started_at;
+static unsigned long long back_pressed_at;
+static int back_held;
+static int back_toggle_triggered;
+static Display *persistent_x_display;
 
 static void log_message(const char *format, ...);
 
@@ -286,65 +291,102 @@ static Display *open_x_display(void)
     return XOpenDisplay(NULL);
 }
 
+static int x_io_error(Display *display)
+{
+    (void)display;
+    persistent_x_display = NULL;
+    return 0;
+}
+
+static Display *persistent_x(void)
+{
+    if (persistent_x_display != NULL) {
+        return persistent_x_display;
+    }
+    persistent_x_display = open_x_display();
+    if (persistent_x_display != NULL) {
+        XSetIOErrorHandler(x_io_error);
+    }
+    return persistent_x_display;
+}
+
 static void send_command_in_child(long command)
 {
-    pid_t child = fork();
-    if (child != 0) {
+    Display *display = persistent_x();
+    if (display == NULL) {
+        log_message("X action %ld ignored: display unavailable", command);
         return;
     }
-    Display *display = open_x_display();
-    if (display != NULL) {
-        Atom owner = XInternAtom(display, "_FIELD_DESKTOP_COMMAND_OWNER", False);
-        Window window = XGetSelectionOwner(display, owner);
-        if (window != None) {
-            XClientMessageEvent message;
-            memset(&message, 0, sizeof(message));
-            message.type = ClientMessage;
-            message.window = window;
-            message.message_type =
-                XInternAtom(display, "_FIELD_DESKTOP_COMMAND", False);
-            message.format = 32;
-            message.data.l[0] = command;
-            XSendEvent(display, window, False, NoEventMask,
-                       (XEvent *)&message);
-            XFlush(display);
-        }
-        XCloseDisplay(display);
+    Atom owner = XInternAtom(display, "_FIELD_DESKTOP_COMMAND_OWNER", False);
+    Window window = XGetSelectionOwner(display, owner);
+    if (window != None) {
+        XClientMessageEvent message;
+        memset(&message, 0, sizeof(message));
+        message.type = ClientMessage;
+        message.window = window;
+        message.message_type =
+            XInternAtom(display, "_FIELD_DESKTOP_COMMAND", False);
+        message.format = 32;
+        message.data.l[0] = command;
+        XSendEvent(display, window, False, NoEventMask,
+                   (XEvent *)&message);
+        XFlush(display);
+        log_message("action=command_%ld sent to shell", command);
+    } else {
+        log_message("action=command_%ld shell owner unavailable", command);
     }
-    _exit(0);
 }
 
 static void send_escape_in_child(void)
 {
-    pid_t child = fork();
-    if (child != 0) {
+    Display *display = persistent_x();
+    if (display == NULL) {
+        log_message("action=back ignored: X display unavailable");
         return;
     }
-    Display *display = open_x_display();
-    if (display != NULL) {
-        Window focus = None;
-        int revert = 0;
-        XGetInputFocus(display, &focus, &revert);
-        if (focus == None || focus == PointerRoot) {
-            focus = DefaultRootWindow(display);
-        }
-        XKeyEvent event;
-        memset(&event, 0, sizeof(event));
-        event.display = display;
-        event.window = focus;
-        event.root = DefaultRootWindow(display);
-        event.subwindow = None;
-        event.time = CurrentTime;
-        event.same_screen = True;
-        event.keycode = XKeysymToKeycode(display, XK_Escape);
-        event.type = KeyPress;
-        XSendEvent(display, focus, True, KeyPressMask, (XEvent *)&event);
-        event.type = KeyRelease;
-        XSendEvent(display, focus, True, KeyReleaseMask, (XEvent *)&event);
-        XFlush(display);
-        XCloseDisplay(display);
+    KeyCode escape = XKeysymToKeycode(display, XK_Escape);
+    XTestFakeKeyEvent(display, escape, True, CurrentTime);
+    XTestFakeKeyEvent(display, escape, False, CurrentTime);
+    XFlush(display);
+    log_message("action=back Escape press/release sent with XTest");
+}
+
+static void send_show_desktop(void)
+{
+    Display *display = persistent_x();
+    if (display == NULL) {
+        log_message("action=home ignored: X display unavailable");
+        return;
     }
-    _exit(0);
+    Atom showing = XInternAtom(display, "_NET_SHOWING_DESKTOP", False);
+    XEvent event;
+    memset(&event, 0, sizeof(event));
+    event.xclient.type = ClientMessage;
+    event.xclient.window = DefaultRootWindow(display);
+    event.xclient.message_type = showing;
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = 1;
+    XSendEvent(display, DefaultRootWindow(display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask,
+               (XEvent *)&event);
+    XFlush(display);
+    send_command_in_child(CMD_HOME);
+    log_message("action=home sent _NET_SHOWING_DESKTOP");
+}
+
+static void toggle_keyboard_manual(void)
+{
+    pid_t child = fork();
+    if (child == 0) {
+        execl("/usr/bin/fieldm-keyboard", "fieldm-keyboard",
+              "manual", "toggle", (char *)NULL);
+        _exit(127);
+    }
+    if (child < 0) {
+        log_message("action=keyboard-toggle fork failed: %s", strerror(errno));
+    } else {
+        log_message("action=keyboard-toggle triggered");
+    }
 }
 
 
@@ -663,7 +705,9 @@ static void restart_gui_session(void)
 static void update_key_state(int device, unsigned int code, int value,
                              unsigned long long now)
 {
+    const char *action = "ignore";
     if (value == 2) {
+        log_message("key event device=%d code=%u value=repeat action=ignored", device, code);
         return;
     }
     int is_new_press = value == 1 &&
@@ -679,6 +723,7 @@ static void update_key_state(int device, unsigned int code, int value,
     if (screen_blanked && code == KEY_HOME && value == 1) {
         toggle_power();
         send_command_in_child(CMD_HOME);
+        log_message("key event device=%d code=%u value=%d action=blanked-home", device, code, value);
         return;
     }
     if (screen_blanked && code != KEY_POWER &&
@@ -708,6 +753,9 @@ static void update_key_state(int device, unsigned int code, int value,
                 duration < POWER_TAP_MS && !other_hardware_key_held()) {
                 toggle_power();
                 send_command_in_child(CMD_POWER);
+                action = "power-tap";
+            } else {
+                action = "power-release-suppressed";
             }
             reset_combo_if_released();
         }
@@ -726,18 +774,41 @@ static void update_key_state(int device, unsigned int code, int value,
             if (!combo_seen && !volume_up_suppressed &&
                 !other_hardware_key_held()) {
                 set_volume(1);
+                action = "volume-up-release";
+            } else {
+                action = "volume-up-release-suppressed";
             }
             reset_combo_if_released();
         }
-    } else if (value == 1 && (code == KEY_BACK || code == KEY_ESC)) {
-        send_escape_in_child();
+    } else if (code == KEY_BACK || code == KEY_ESC) {
+        if (value == 1 && is_new_press) {
+            back_held = 1;
+            back_pressed_at = now;
+            back_toggle_triggered = 0;
+            action = "back-press";
+        } else if (value == 0 && back_held) {
+            back_held = 0;
+            if (back_toggle_triggered) {
+                action = "back-long-toggle";
+            } else {
+                send_escape_in_child();
+                action = "back-short-escape";
+            }
+            back_pressed_at = 0;
+            back_toggle_triggered = 0;
+        }
     } else if (value == 1 && code == KEY_HOME) {
-        send_command_in_child(CMD_HOME);
+        send_show_desktop();
+        action = "home-show-desktop";
     } else if (value == 1 && code == KEY_MENU) {
         send_command_in_child(CMD_RECENTS);
+        action = "recents-open";
     } else if (value == 1 && code == KEY_VOLUMEDOWN) {
         set_volume(-1);
+        action = "volume-down";
     }
+    log_message("key event device=%d code=%u value=%d action=%s",
+                device, code, value, action);
 }
 
 static void check_restart_combo(unsigned long long now)
@@ -746,6 +817,13 @@ static void check_restart_combo(unsigned long long now)
         now - combo_started_at >= RESTART_HOLD_MS) {
         combo_triggered = 1;
         restart_gui_session();
+    }
+    if (back_held && !back_toggle_triggered &&
+        back_pressed_at != 0 &&
+        now - back_pressed_at >= 600) {
+        back_toggle_triggered = 1;
+        toggle_keyboard_manual();
+        log_message("action=back-long keyboard-toggle");
     }
 }
 
@@ -874,6 +952,7 @@ int main(void)
         fclose(state);
     }
     open_input_devices();
+    persistent_x();
     log_message("started independently of X; blanked=%d", screen_blanked);
 
     struct pollfd polls[MAX_INPUT_DEVICES];

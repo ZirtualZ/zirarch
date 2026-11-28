@@ -134,6 +134,8 @@ rollback()
 		if test -f \$dir/fieldm-desktop-launch; then cp -p \$dir/fieldm-desktop-launch /usr/bin/fieldm-desktop-launch.rollback-new; mv -f /usr/bin/fieldm-desktop-launch.rollback-new /usr/bin/fieldm-desktop-launch; fi
 		if test -f \$dir/fieldm-keyboard; then cp -p \$dir/fieldm-keyboard /usr/bin/fieldm-keyboard.rollback-new; mv -f /usr/bin/fieldm-keyboard.rollback-new /usr/bin/fieldm-keyboard; fi
 		if test -f \$dir/fieldm-terminal; then cp -p \$dir/fieldm-terminal /usr/bin/fieldm-terminal.rollback-new; mv -f /usr/bin/fieldm-terminal.rollback-new /usr/bin/fieldm-terminal; fi
+		if test -f \$dir/fieldm-imd; then cp -p \$dir/fieldm-imd /usr/bin/fieldm-imd.rollback-new; mv -f /usr/bin/fieldm-imd.rollback-new /usr/bin/fieldm-imd; fi
+		if test -f \$dir/fieldm-imd.initd; then cp -p \$dir/fieldm-imd.initd /etc/init.d/fieldm-imd.rollback-new; mv -f /etc/init.d/fieldm-imd.rollback-new /etc/init.d/fieldm-imd; fi
 		if test -f \$dir/zirarch-boot-mode; then cp -p \$dir/zirarch-boot-mode /usr/bin/zirarch-boot-mode.rollback-new; mv -f /usr/bin/zirarch-boot-mode.rollback-new /usr/bin/zirarch-boot-mode; fi
 		if test -f \$dir/zirarch-boot-mode.initd; then cp -p \$dir/zirarch-boot-mode.initd /etc/init.d/zirarch-boot-mode.rollback-new; mv -f /etc/init.d/zirarch-boot-mode.rollback-new /etc/init.d/zirarch-boot-mode; fi
 		if test -f \$dir/fieldm-keys.initd; then cp -p \$dir/fieldm-keys.initd /etc/init.d/fieldm-keys.rollback-new; mv -f /etc/init.d/fieldm-keys.rollback-new /etc/init.d/fieldm-keys; fi
@@ -176,6 +178,8 @@ fieldm-session|$ROOT/overlays/kernel/boot-mode/fieldm-session|/usr/bin/fieldm-se
 fieldm-desktop-launch|$ROOT/overlays/kernel/boot-mode/fieldm-desktop-launch|/usr/bin/fieldm-desktop-launch
 fieldm-keyboard|$ROOT/overlays/kernel/boot-mode/fieldm-keyboard|/usr/bin/fieldm-keyboard
 fieldm-terminal|$ROOT/overlays/kernel/boot-mode/fieldm-terminal|/usr/bin/fieldm-terminal
+fieldm-imd|$ROOT/overlays/kernel/boot-mode/fieldm-imd|/usr/bin/fieldm-imd
+fieldm-imd.initd|$ROOT/overlays/kernel/boot-mode/fieldm-imd.initd|/etc/init.d/fieldm-imd
 zirarch-boot-mode|$ROOT/overlays/kernel/boot-mode/zirarch-boot-mode|/usr/bin/zirarch-boot-mode
 zirarch-boot-mode.initd|$ROOT/overlays/kernel/boot-mode/zirarch-boot-mode.initd|/etc/init.d/zirarch-boot-mode
 fieldm-keys.initd|$ROOT/overlays/kernel/boot-mode/fieldm-keys.initd|/etc/init.d/fieldm-keys

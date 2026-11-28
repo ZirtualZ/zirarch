@@ -88,6 +88,7 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	xinit x11-xserver-utils x11-utils dbus dbus-x11
 	libgtk-4-dev libx11-dev libxft-dev libxtst-dev pkg-config build-essential
 	matchbox-window-manager \
+	at-spi2-core python3-pyatspi libatk-adaptor \
 	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
 	ntpsec-ntpdate fake-hwclock e2fsprogs ca-certificates nano"
