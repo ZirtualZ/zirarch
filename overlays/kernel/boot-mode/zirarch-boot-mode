@@ -29,31 +29,7 @@ log_message()
 }
 case "$mode" in
 	gui)
-		failures=0
-		window_start=$(date +%s 2>/dev/null || echo 0)
-		while :; do
-			now=$(date +%s 2>/dev/null || echo 0)
-			if [ $((now - window_start)) -ge 300 ]; then
-				failures=0
-				window_start=$now
-			fi
-			if [ "$failures" -ge 5 ]; then
-				printf 'recovery\n' > /run/zirarch-boot-mode
-				printf 'recovery\n' > /run/fieldm-supervisor-state
-				log_message "GUI supervisor failed 5 times; entering framebuffer recovery"
-				chvt 1 2>/dev/null || :
-				exec /usr/bin/zirarch-fbconsole
-			fi
-			started=$(date +%s 2>/dev/null || echo 0)
-			/usr/bin/fieldm-session
-			status=$?
-			ended=$(date +%s 2>/dev/null || echo 0)
-			log_message "fieldm-session exit_status=$status elapsed=$((ended-started))s failures=$((failures+1))"
-			failures=$((failures + 1))
-			delay=$((failures * 2))
-			[ "$delay" -le 30 ] || delay=30
-			sleep "$delay"
-		done
+		exec /usr/bin/fieldm-session
 		;;
 	tty)
 		if rc-service buffyboard start 2>/dev/null; then

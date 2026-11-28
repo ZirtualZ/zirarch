@@ -4,7 +4,9 @@
 #include <X11/Xatom.h>
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
+#include <X11/Xutil.h>
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -29,6 +31,11 @@ enum {
     MAX_INPUT_DEVICES = 64,
     RESTART_HOLD_MS = 5000,
     POWER_TAP_MS = 1000
+};
+
+enum {
+    KEY_RECENT_SAMSUNG = 254,
+    KEY_APPSELECT_SAMSUNG = 580
 };
 
 typedef struct {
@@ -351,6 +358,146 @@ static void send_escape_in_child(void)
     log_message("action=back Escape press/release sent with XTest");
 }
 
+static void send_alt_left(void)
+{
+    Display *display = persistent_x();
+    if (display == NULL) {
+        log_message("action=back-browser ignored: X display unavailable");
+        return;
+    }
+    KeyCode alt = XKeysymToKeycode(display, XK_Alt_L);
+    KeyCode left = XKeysymToKeycode(display, XK_Left);
+    XTestFakeKeyEvent(display, alt, True, CurrentTime);
+    XTestFakeKeyEvent(display, left, True, CurrentTime);
+    XTestFakeKeyEvent(display, left, False, CurrentTime);
+    XTestFakeKeyEvent(display, alt, False, CurrentTime);
+    XFlush(display);
+    log_message("action=back-browser Alt+Left sent with XTest");
+}
+
+static void send_show_desktop(void);
+
+static int is_browser_class(const char *value)
+{
+    if (value == NULL) return 0;
+    char lower[256];
+    size_t length = strlen(value);
+    if (length >= sizeof(lower)) length = sizeof(lower)-1;
+    for (size_t i = 0; i < length; ++i)
+        lower[i] = (char)tolower((unsigned char)value[i]);
+    lower[length] = '\0';
+    static const char *names[] = {
+        "netsurf", "surf", "vimb", "epiphany", "firefox",
+        "chromium", "chrome", "navigator"
+    };
+    for (size_t i = 0; i < sizeof(names)/sizeof(names[0]); ++i) {
+        if (strstr(lower, names[i]) != NULL) return 1;
+    }
+    return 0;
+}
+
+static int active_window_class(char *buffer, size_t size)
+{
+    Display *display = persistent_x();
+    if (display == NULL) {
+        buffer[0] = '\0';
+        return 0;
+    }
+    Window focus = None;
+    int revert = 0;
+    XGetInputFocus(display, &focus, &revert);
+    if (focus == None || focus == PointerRoot) {
+        buffer[0] = '\0';
+        return 0;
+    }
+    XClassHint hint = {0};
+    if (!XGetClassHint(display, focus, &hint)) {
+        buffer[0] = '\0';
+        return 0;
+    }
+    const char *value = hint.res_name;
+    if (value == NULL) value = hint.res_class;
+    if (value == NULL) {
+        buffer[0] = '\0';
+    } else {
+        snprintf(buffer, size, "%s", value);
+    }
+    if (hint.res_name != NULL) XFree(hint.res_name);
+    if (hint.res_class != NULL) XFree(hint.res_class);
+    return buffer[0] != '\0';
+}
+
+static void send_show_desktop(void);
+static void send_home(void);
+
+static void context_back(void)
+{
+    char class_name[256];
+    active_window_class(class_name, sizeof(class_name));
+    FILE *table = fopen("/etc/fieldm/back-keys.conf", "r");
+    if (table != NULL) {
+        char line[256];
+        while (fgets(line, sizeof(line), table) != NULL) {
+            char *cursor = line;
+            while (*cursor == ' ' || *cursor == '\t') ++cursor;
+            if (*cursor == '\0' || *cursor == '#') continue;
+            line[strcspn(line, "\r\n")] = '\0';
+            char *equals = strchr(line, '=');
+            if (equals == NULL) continue;
+            *equals++ = '\0';
+            char *key = line;
+            char *action = equals;
+            while (*key == ' ' || *key == '\t') ++key;
+            char *end = key + strlen(key);
+            while (end > key && (end[-1]==' ' || end[-1]=='\t')) *--end='\0';
+            if (strstr(class_name, key) != NULL) {
+                if (strcmp(action, "browser") == 0) {
+                    fclose(table);
+                    send_alt_left();
+                    log_message("back action=browser wm_class=%s", class_name);
+                    return;
+                }
+                if (strcmp(action, "home") == 0) {
+                    fclose(table);
+                    send_home();
+                    log_message("back action=home wm_class=%s", class_name);
+                    return;
+                }
+                fclose(table);
+                send_escape_in_child();
+                log_message("back action=escape wm_class=%s", class_name);
+                return;
+            }
+        }
+        fclose(table);
+    }
+    if (is_browser_class(class_name)) {
+        send_alt_left();
+        log_message("back action=browser-back wm_class=%s", class_name);
+    } else if (strstr(class_name, "xterm") != NULL ||
+               strstr(class_name, "XTerm") != NULL ||
+               strstr(class_name, "htop") != NULL ||
+               strstr(class_name, "btop") != NULL ||
+               strstr(class_name, "fieldm-kbd") != NULL ||
+               strstr(class_name, "simple-desktop") != NULL ||
+               strstr(class_name, "field-desktop") != NULL ||
+               strstr(class_name, "settings") != NULL ||
+               strstr(class_name, "recents") != NULL) {
+        if (strstr(class_name, "simple-desktop") != NULL ||
+            strstr(class_name, "field-desktop") != NULL ||
+            strstr(class_name, "Settings") != NULL ||
+            strstr(class_name, "Recents") != NULL) {
+            send_command_in_child(CMD_HOME);
+        } else {
+            send_home();
+        }
+        log_message("back action=home wm_class=%s", class_name);
+    } else {
+        send_escape_in_child();
+        log_message("back action=escape wm_class=%s", class_name);
+    }
+}
+
 static void send_show_desktop(void)
 {
     Display *display = persistent_x();
@@ -372,6 +519,11 @@ static void send_show_desktop(void)
     XFlush(display);
     send_command_in_child(CMD_HOME);
     log_message("action=home sent _NET_SHOWING_DESKTOP");
+}
+
+static void send_home(void)
+{
+    send_show_desktop();
 }
 
 static void toggle_keyboard_manual(void)
@@ -791,16 +943,19 @@ static void update_key_state(int device, unsigned int code, int value,
             if (back_toggle_triggered) {
                 action = "back-long-toggle";
             } else {
-                send_escape_in_child();
-                action = "back-short-escape";
+                context_back();
+                action = "back-context";
             }
             back_pressed_at = 0;
             back_toggle_triggered = 0;
         }
-    } else if (value == 1 && code == KEY_HOME) {
+    } else if (value == 1 &&
+               (code == KEY_HOME || code == KEY_HOMEPAGE)) {
         send_show_desktop();
         action = "home-show-desktop";
-    } else if (value == 1 && code == KEY_MENU) {
+    } else if (value == 1 &&
+               (code == KEY_MENU || code == KEY_RECENT_SAMSUNG ||
+                code == KEY_APPSELECT_SAMSUNG)) {
         send_command_in_child(CMD_RECENTS);
         action = "recents-open";
     } else if (value == 1 && code == KEY_VOLUMEDOWN) {
@@ -808,7 +963,7 @@ static void update_key_state(int device, unsigned int code, int value,
         action = "volume-down";
     }
     log_message("key event device=%d code=%u value=%d action=%s",
-                device, code, value, action);
+            device, code, value, action);
 }
 
 static void check_restart_combo(unsigned long long now)

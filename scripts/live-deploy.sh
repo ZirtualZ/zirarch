@@ -180,6 +180,7 @@ fieldm-keyboard|$ROOT/overlays/kernel/boot-mode/fieldm-keyboard|/usr/bin/fieldm-
 fieldm-terminal|$ROOT/overlays/kernel/boot-mode/fieldm-terminal|/usr/bin/fieldm-terminal
 fieldm-imd|$ROOT/overlays/kernel/boot-mode/fieldm-imd|/usr/bin/fieldm-imd
 fieldm-imd.initd|$ROOT/overlays/kernel/boot-mode/fieldm-imd.initd|/etc/init.d/fieldm-imd
+back-keys.conf|$ROOT/overlays/kernel/boot-mode/back-keys.conf|/etc/fieldm/back-keys.conf
 zirarch-boot-mode|$ROOT/overlays/kernel/boot-mode/zirarch-boot-mode|/usr/bin/zirarch-boot-mode
 zirarch-boot-mode.initd|$ROOT/overlays/kernel/boot-mode/zirarch-boot-mode.initd|/etc/init.d/zirarch-boot-mode
 fieldm-keys.initd|$ROOT/overlays/kernel/boot-mode/fieldm-keys.initd|/etc/init.d/fieldm-keys
