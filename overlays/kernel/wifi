@@ -153,6 +153,8 @@ connect_wifi()
 		fail "no DHCP client is installed"
 	fi ||
 		fail "connected, but DHCP did not obtain a lease"
+	[ ! -x /usr/bin/zirarch-clock-sync ] ||
+		/usr/bin/zirarch-clock-sync --async
 	echo "Wi-Fi ready."
 }
 

@@ -1,5 +1,6 @@
 #include "gtk_shell_internal.h"
 #include "wifi.h"
+#include "../theme.h"
 
 #include <X11/Xlib.h>
 #include <errno.h>
@@ -9,6 +10,7 @@
 #include <string.h>
 #include <sys/statvfs.h>
 #include <sys/stat.h>
+#include <time.h>
 
 static void back_clicked(GtkButton *button, gpointer data)
 {
@@ -101,6 +103,7 @@ static void packages_clicked(GtkButton *button, gpointer data)
 
 static void display_apply(GtkButton *button, gpointer data)
 {
+    ShellState *state = data;
     const char *brightness = g_object_get_data(G_OBJECT(button), "brightness");
     const char *dpi = g_object_get_data(G_OBJECT(button), "dpi");
     if (brightness != NULL) {
@@ -119,20 +122,7 @@ static void display_apply(GtkButton *button, gpointer data)
         char path[1200];
         const char *home = g_get_home_dir();
         snprintf(path, sizeof(path), "%s/.Xresources", home);
-        FILE *file = fopen(path, "w");
-        int failed = file == NULL;
-        if (file != NULL) {
-            if (fprintf(file, "Xft.dpi: %s\n"
-                          "Xft.antialias: 1\n"
-                          "Xft.hinting: 1\n"
-                          "XTerm*background: #F4F1EA\n"
-                          "XTerm*foreground: #111111\n"
-                          "XTerm*cursorColor: #111111\n"
-                          "XTerm*faceName: DejaVu Sans Mono\n"
-                          "XTerm*faceSize: 11\n"
-                          "XTerm*scrollBar: false\n", dpi) < 0) failed = 1;
-            if (fclose(file) != 0) failed = 1;
-        }
+        int failed = !fieldm_apply_xresources(state->dark_theme, dpi);
         if (failed) {
             shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
                              "Could not save text-size settings.");
@@ -154,13 +144,30 @@ static void display_apply(GtkButton *button, gpointer data)
             }
         }
     }
-    (void)data;
 }
 
-static GtkWidget *display_page(void)
+static void theme_clicked(GtkButton *button, gpointer data)
+{
+    ShellState *state = data;
+    int dark = g_object_get_data(G_OBJECT(button), "dark-theme") != NULL;
+    shell_set_theme(state, dark);
+}
+
+static GtkWidget *display_page(ShellState *state)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_box_append(GTK_BOX(page), heading("Display"));
+    gtk_box_append(GTK_BOX(page), gtk_label_new("Theme"));
+    GtkWidget *themes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *light = gtk_button_new_with_label("Light");
+    GtkWidget *dark = gtk_button_new_with_label("Dark");
+    g_object_set_data(G_OBJECT(light), "dark-theme", NULL);
+    g_object_set_data(G_OBJECT(dark), "dark-theme", GINT_TO_POINTER(1));
+    g_signal_connect(light, "clicked", G_CALLBACK(theme_clicked), state);
+    g_signal_connect(dark, "clicked", G_CALLBACK(theme_clicked), state);
+    gtk_box_append(GTK_BOX(themes), light);
+    gtk_box_append(GTK_BOX(themes), dark);
+    gtk_box_append(GTK_BOX(page), themes);
     gtk_box_append(GTK_BOX(page), row("Brightness"));
     for (int i = 0; i < 3; ++i) {
         GtkWidget *button = gtk_button_new_with_label(
@@ -168,7 +175,7 @@ static GtkWidget *display_page(void)
         g_object_set_data_full(G_OBJECT(button), "brightness",
                                g_strdup(i == 0 ? "34" : i == 1 ? "67" : "134"),
                                g_free);
-        g_signal_connect(button, "clicked", G_CALLBACK(display_apply), NULL);
+        g_signal_connect(button, "clicked", G_CALLBACK(display_apply), state);
         gtk_box_append(GTK_BOX(page), button);
     }
     gtk_box_append(GTK_BOX(page), gtk_label_new("Text size"));
@@ -177,7 +184,7 @@ static GtkWidget *display_page(void)
         GtkWidget *button = gtk_button_new_with_label(dpis[i]);
         g_object_set_data_full(G_OBJECT(button), "dpi",
                                g_strdup(dpis[i]), g_free);
-        g_signal_connect(button, "clicked", G_CALLBACK(display_apply), NULL);
+        g_signal_connect(button, "clicked", G_CALLBACK(display_apply), state);
         gtk_box_append(GTK_BOX(page), button);
     }
     return page;
@@ -507,6 +514,318 @@ static GtkWidget *battery_page(void)
     return page;
 }
 
+typedef struct {
+    GtkWidget *page;
+    GtkWidget *list;
+    GtkWidget *run_all;
+    GtkWidget *busy;
+    GSubprocess *process;
+} HardwarePageState;
+
+static void hardware_show_detail(GtkButton *button, gpointer data)
+{
+    (void)data;
+    const char *text = g_object_get_data(G_OBJECT(button), "detail");
+    shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                     text != NULL ? text : "No details available.");
+}
+
+static void hardware_set_result(HardwarePageState *state, const char *line)
+{
+    char **fields = g_strsplit(line, "\t", 4);
+    if (g_strv_length(fields) >= 4) {
+        GtkWidget *item = NULL;
+        for (GtkWidget *child = gtk_widget_get_first_child(state->list);
+             child != NULL;
+             child = gtk_widget_get_next_sibling(child)) {
+            const char *id = g_object_get_data(G_OBJECT(child), "probe-id");
+            if (id != NULL && strcmp(id, fields[0]) == 0) {
+                item = child;
+                break;
+            }
+        }
+        if (item != NULL) {
+            GtkWidget *status = g_object_get_data(G_OBJECT(item),
+                                                   "probe-status");
+            GtkWidget *detail = g_object_get_data(G_OBJECT(item),
+                                                   "probe-detail");
+            char *label = g_strdup_printf("%s — %s", fields[2], fields[1]);
+            gtk_label_set_text(GTK_LABEL(status), label);
+            g_free(label);
+            g_object_set_data_full(G_OBJECT(detail), "detail",
+                                   g_strdup(fields[3]), g_free);
+        }
+    }
+    g_strfreev(fields);
+}
+
+static void hardware_probe_done(GObject *source, GAsyncResult *result,
+                                gpointer data)
+{
+    HardwarePageState *state = data;
+    char *stdout_text = NULL, *stderr_text = NULL;
+    GError *error = NULL;
+    if (!g_subprocess_communicate_utf8_finish(
+            G_SUBPROCESS(source), result, &stdout_text, &stderr_text, &error)) {
+        gtk_label_set_text(GTK_LABEL(state->busy), "Hardware probe failed.");
+    } else {
+        char **lines = g_strsplit(stdout_text, "\n", -1);
+        for (size_t i = 0; lines[i] != NULL; ++i) {
+            if (lines[i][0] != '\0') hardware_set_result(state, lines[i]);
+        }
+        g_strfreev(lines);
+        if (error == NULL && stderr_text != NULL && stderr_text[0] != '\0')
+            gtk_label_set_text(GTK_LABEL(state->busy), stderr_text);
+        else
+            gtk_label_set_text(GTK_LABEL(state->busy),
+                               "Complete. Details are read-only and time-limited.");
+    }
+    g_clear_error(&error);
+    g_free(stdout_text);
+    g_free(stderr_text);
+    g_clear_object(&state->process);
+    gtk_widget_set_sensitive(state->run_all, TRUE);
+}
+
+static int hardware_start(HardwarePageState *state, const char *probe)
+{
+    if (state->process != NULL) return 0;
+    GError *error = NULL;
+    const char *arguments[] = {
+        "/usr/lib/fieldm/hwprobe",
+        "--log",
+        probe == NULL ? "all" : probe,
+        NULL
+    };
+    state->process = g_subprocess_newv((const gchar *const *)arguments,
+        G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE,
+        &error);
+    if (state->process == NULL) {
+        char *message = g_strdup_printf("Could not start hardware probe: %s",
+                                        error != NULL ? error->message :
+                                        "unknown error");
+        gtk_label_set_text(GTK_LABEL(state->busy), message);
+        g_free(message);
+        g_clear_error(&error);
+        return 0;
+    }
+    gtk_widget_set_sensitive(state->run_all, FALSE);
+    gtk_label_set_text(GTK_LABEL(state->busy), "Running read-only probes…");
+    g_subprocess_communicate_utf8_async(state->process, NULL, NULL,
+                                        hardware_probe_done, state);
+    return 1;
+}
+
+static void hardware_run_all(GtkButton *button, gpointer data)
+{
+    (void)button;
+    hardware_start(data, NULL);
+}
+
+static void hardware_run_one(GtkButton *button, gpointer data)
+{
+    const char *id = g_object_get_data(G_OBJECT(button), "probe-id");
+    hardware_start(data, id);
+}
+
+static void hardware_export(GtkButton *button, gpointer data)
+{
+    HardwarePageState *state = data;
+    char date[32];
+    time_t now = time(NULL);
+    struct tm utc = {0};
+    gmtime_r(&now, &utc);
+    strftime(date, sizeof(date), "%Y%m%d-%H%M%S", &utc);
+    char *destination_name = g_strdup_printf("/root/hwtest-%s.txt", date);
+    GFile *source = g_file_new_for_path("/var/log/fieldm-hwtest.txt");
+    GFile *destination = g_file_new_for_path(destination_name);
+    GError *error = NULL;
+    gboolean ok = g_file_copy(source, destination, G_FILE_COPY_OVERWRITE,
+                              NULL, NULL, NULL, &error);
+    if (ok) {
+        gtk_label_set_text(GTK_LABEL(state->busy), destination_name);
+    } else {
+        gtk_label_set_text(GTK_LABEL(state->busy),
+                           error != NULL ? error->message :
+                           "Could not export report.");
+    }
+    g_clear_error(&error);
+    g_object_unref(source);
+    g_object_unref(destination);
+    g_free(destination_name);
+    (void)button;
+}
+
+static void hardware_page_destroyed(GtkWidget *widget, gpointer data)
+{
+    HardwarePageState *state = data;
+    if (state->process != NULL) g_subprocess_force_exit(state->process);
+    (void)widget;
+}
+
+static GtkWidget *hardware_page(void)
+{
+    static const struct {
+        const char *id;
+        const char *name;
+    } probes[] = {
+        {"display", "Display"},
+        {"touchscreen", "Touchscreen"},
+        {"hardware-keys", "Hardware keys"},
+        {"speaker", "Speaker / earpiece"},
+        {"microphone", "Microphone"},
+        {"vibration", "Vibration"},
+        {"sensors", "Sensors"},
+        {"battery", "Battery"},
+        {"backlight", "Backlight"},
+        {"wifi", "Wi-Fi"},
+        {"bluetooth", "Bluetooth"},
+        {"cameras", "Cameras"},
+        {"gps", "GPS"},
+        {"modem", "Modem"},
+        {"storage", "Storage"},
+        {"rtc", "RTC"},
+        {"usb-network", "USB networking"}
+    };
+    HardwarePageState *state = g_new0(HardwarePageState, 1);
+    state->page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(state->page, 12);
+    gtk_widget_set_margin_end(state->page, 12);
+    gtk_widget_set_margin_top(state->page, 8);
+    gtk_box_append(GTK_BOX(state->page), heading("Hardware Test"));
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    state->run_all = gtk_button_new_with_label("Run all");
+    GtkWidget *export = gtk_button_new_with_label("Export report");
+    gtk_box_append(GTK_BOX(toolbar), state->run_all);
+    gtk_box_append(GTK_BOX(toolbar), export);
+    gtk_box_append(GTK_BOX(state->page), toolbar);
+    state->busy = gtk_label_new("Read-only probes; interactive checks are marked NEEDS CHECK.");
+    gtk_label_set_wrap(GTK_LABEL(state->busy), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(state->busy), 0.0f);
+    gtk_box_append(GTK_BOX(state->page), state->busy);
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scroll, TRUE);
+    state->list = gtk_list_box_new();
+    for (size_t i = 0; i < G_N_ELEMENTS(probes); ++i) {
+        GtkWidget *item = gtk_list_box_row_new();
+        GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *status = gtk_label_new("NEEDS CHECK");
+        gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+        gtk_widget_set_hexpand(status, TRUE);
+        char *text = g_strdup_printf("%s — not run", probes[i].name);
+        gtk_label_set_text(GTK_LABEL(status), text);
+        g_free(text);
+        GtkWidget *test = gtk_button_new_with_label("Test");
+        GtkWidget *detail = gtk_button_new_with_label("Details");
+        g_object_set_data_full(G_OBJECT(item), "probe-id",
+                               g_strdup(probes[i].id), g_free);
+        g_object_set_data(G_OBJECT(item), "probe-status", status);
+        g_object_set_data(G_OBJECT(item), "probe-detail", detail);
+        g_object_set_data_full(G_OBJECT(test), "probe-id",
+                               g_strdup(probes[i].id), g_free);
+        g_object_set_data_full(G_OBJECT(detail), "detail",
+                               g_strdup("Run this probe to collect details."),
+                               g_free);
+        g_signal_connect(test, "clicked", G_CALLBACK(hardware_run_one), state);
+        g_signal_connect(detail, "clicked", G_CALLBACK(hardware_show_detail),
+                         state);
+        gtk_box_append(GTK_BOX(line), status);
+        gtk_box_append(GTK_BOX(line), test);
+        gtk_box_append(GTK_BOX(line), detail);
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(item), line);
+        gtk_list_box_append(GTK_LIST_BOX(state->list), item);
+    }
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), state->list);
+    gtk_box_append(GTK_BOX(state->page), scroll);
+    g_signal_connect(state->run_all, "clicked",
+                     G_CALLBACK(hardware_run_all), state);
+    g_signal_connect(export, "clicked", G_CALLBACK(hardware_export), state);
+    g_signal_connect(state->page, "destroy",
+                     G_CALLBACK(hardware_page_destroyed), state);
+    g_object_set_data_full(G_OBJECT(state->page), "hardware-state",
+                           state, g_free);
+    return state->page;
+}
+
+static gboolean update_clock_status(gpointer data)
+{
+    FILE *file = fopen("/run/zirarch-clock-status", "r");
+    char state[32] = "", timestamp[64] = "";
+    if (file != NULL) {
+        if (fscanf(file, "%31s %63s", state, timestamp) < 1) {
+            state[0] = '\0';
+        }
+        fclose(file);
+    }
+    if (strcmp(state, "synced") == 0) {
+        time_t now = time(NULL);
+        struct tm local = {0};
+        localtime_r(&now, &local);
+        char text[64];
+        strftime(text, sizeof(text), "Time: synced %H:%M", &local);
+        gtk_label_set_text(GTK_LABEL(data), text);
+    } else {
+        gtk_label_set_text(GTK_LABEL(data), "Time: not synced");
+    }
+    (void)timestamp;
+    return G_SOURCE_CONTINUE;
+}
+
+static void remove_clock_timer(GtkWidget *widget, gpointer data)
+{
+    guint source_id = GPOINTER_TO_UINT(data);
+    if (source_id != 0) g_source_remove(source_id);
+    (void)widget;
+}
+
+static void post_every_boot_clicked(GtkCheckButton *button, gpointer data)
+{
+    (void)data;
+    const char *path = "/var/lib/zirarch/post-every-boot";
+    GError *error = NULL;
+    if (gtk_check_button_get_active(button)) {
+        if (g_mkdir_with_parents("/var/lib/zirarch", 0755) != 0 ||
+            !g_file_set_contents(path, "1\n", -1, &error)) {
+            shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                             "Could not enable POST on every boot.");
+        }
+    } else if (remove(path) != 0 && errno != ENOENT) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "Could not disable POST on every boot.");
+    }
+    g_clear_error(&error);
+}
+
+static void post_run_clicked(GtkButton *button, gpointer data)
+{
+    (void)data;
+    GError *error = NULL;
+    char *arguments[] = {"/usr/bin/zirarch-post", "--force", NULL};
+    if (!g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                        NULL, &error)) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "Could not run POST.");
+    }
+    g_clear_error(&error);
+}
+
+static void post_report_clicked(GtkButton *button, gpointer data)
+{
+    (void)data;
+    char *report = NULL;
+    GError *error = NULL;
+    if (!g_file_get_contents("/var/log/zirarch-post.log",
+                             &report, NULL, &error)) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "No previous POST report is available.");
+    } else {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         report);
+    }
+    g_clear_error(&error);
+    g_free(report);
+}
+
 static GtkWidget *about_page(void)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -522,6 +841,15 @@ static GtkWidget *about_page(void)
     char model[256];
     snprintf(model, sizeof(model), "Kernel %s", kernel);
     gtk_box_append(GTK_BOX(page), gtk_label_new(model));
+    GtkWidget *clock_status = gtk_label_new("Time: not synced");
+    gtk_label_set_xalign(GTK_LABEL(clock_status), 0.0f);
+    gtk_box_append(GTK_BOX(page), clock_status);
+    update_clock_status(clock_status);
+    guint clock_timer = g_timeout_add_seconds(
+        1, update_clock_status, clock_status);
+    g_signal_connect(clock_status, "destroy",
+                     G_CALLBACK(remove_clock_timer),
+                     GUINT_TO_POINTER(clock_timer));
     FILE *stats = fopen("/proc/loadavg", "r");
     char load[128] = "CPU load unavailable";
     if (stats != NULL) {
@@ -567,6 +895,21 @@ static GtkWidget *about_page(void)
         snprintf(disk_text, sizeof(disk_text), "Disk usage unavailable");
     }
     gtk_box_append(GTK_BOX(page), gtk_label_new(disk_text));
+    GtkWidget *post_every = gtk_check_button_new_with_label(
+        "Show POST on every boot");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(post_every),
+        g_file_test("/var/lib/zirarch/post-every-boot",
+                    G_FILE_TEST_IS_REGULAR));
+    g_signal_connect(post_every, "toggled",
+                     G_CALLBACK(post_every_boot_clicked), NULL);
+    GtkWidget *post_now = gtk_button_new_with_label("Run POST now");
+    GtkWidget *post_report = gtk_button_new_with_label("Last boot report");
+    g_signal_connect(post_now, "clicked", G_CALLBACK(post_run_clicked), NULL);
+    g_signal_connect(post_report, "clicked",
+                     G_CALLBACK(post_report_clicked), NULL);
+    gtk_box_append(GTK_BOX(page), post_every);
+    gtk_box_append(GTK_BOX(page), post_now);
+    gtk_box_append(GTK_BOX(page), post_report);
     return page;
 }
 
@@ -579,6 +922,7 @@ static void open_section(GtkButton *button, gpointer data)
 
 void settings_open(ShellState *state)
 {
+    shell_keyboard_command("entry", "off");
     if (state->launcher != NULL) launcher_close(state);
     if (state->quick_settings_open) {
         state->quick_settings_open = 0;
@@ -614,12 +958,13 @@ void settings_open(ShellState *state)
         gtk_widget_set_margin_bottom(menu, 12);
         gtk_stack_add_named(stack, menu, "menu");
         gtk_stack_add_named(stack, wifi_page_new(GTK_WINDOW(window)), "wifi");
-        gtk_stack_add_named(stack, display_page(), "display");
+        gtk_stack_add_named(stack, display_page(state), "display");
         gtk_stack_add_named(stack, keyboard_page(), "keyboard");
         gtk_stack_add_named(stack, storage_page(), "storage");
         gtk_stack_add_named(stack, about_page(), "about");
         gtk_stack_add_named(stack, apps_page(state), "apps");
         gtk_stack_add_named(stack, battery_page(), "battery");
+        gtk_stack_add_named(stack, hardware_page(), "hardware");
         const char *names[] = {
             "Wi-Fi - networks and connections",
             "Display - brightness and text size",
@@ -627,12 +972,14 @@ void settings_open(ShellState *state)
             "Apps - installed apps and display size",
             "Storage - device storage",
             "Battery - charge and status",
+            "Hardware Test - safe read-only diagnostics",
             "About - device and system information"
         };
         const char *ids[] = {
-            "wifi", "display", "keyboard", "apps", "storage", "battery", "about"
+            "wifi", "display", "keyboard", "apps", "storage", "battery",
+            "hardware", "about"
         };
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < 8; ++i) {
             GtkWidget *button = row(names[i]);
             g_object_set_data(G_OBJECT(button), "section", (gpointer)ids[i]);
             g_signal_connect(button, "clicked", G_CALLBACK(open_section), stack);

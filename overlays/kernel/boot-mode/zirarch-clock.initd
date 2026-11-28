@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+
+description="Restore the persisted Zirarch clock without an RTC"
+
+depend()
+{
+	after fake-hwclock hwclock.sh
+	before zirarch-clock-sync
+}
+
+start()
+{
+	[ -s /var/lib/zirarch/clock ] || {
+		printf '%s\n' not-synced > /run/zirarch-clock-status
+		return 0
+	}
+	read -r saved < /var/lib/zirarch/clock
+	case "$saved" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	current=$(date -u +%s)
+	[ "$saved" -gt "$current" ] &&
+		date -u -s "@$saved" >/dev/null
+	printf '%s\n' not-synced > /run/zirarch-clock-status
+}
+
+stop()
+{
+	mkdir -p /var/lib/zirarch
+	date -u +%s > /var/lib/zirarch/clock
+	fake-hwclock save 2>/dev/null || true
+	hwclock -w 2>/dev/null || true
+}

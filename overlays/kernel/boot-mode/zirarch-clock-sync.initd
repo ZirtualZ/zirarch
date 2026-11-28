@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+description="Synchronize the clock in the background after boot"
+
+depend()
+{
+	after networking usb-rndis
+}
+
+start()
+{
+	/usr/bin/zirarch-clock-sync --async
+}

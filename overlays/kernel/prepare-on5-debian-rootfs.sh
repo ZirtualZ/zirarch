@@ -34,6 +34,12 @@ for firmware in bcmdhd_sta.bin nvram_net.txt; do
 	[ -s "$ANDROID_BLOBS/etc/wifi/$firmware" ] ||
 		die "missing stock Wi-Fi blob: $ANDROID_BLOBS/etc/wifi/$firmware"
 done
+for firmware in audience-es804-fw.bin audience-es804-data.bin; do
+	[ -s "$ANDROID_BLOBS/etc/firmware/$firmware" ] ||
+		die "missing stock EarSmart firmware: $firmware"
+	install -m 644 "$ANDROID_BLOBS/etc/firmware/$firmware" \
+		"$ROOT_DIR/lib/firmware/$firmware"
+done
 
 case "$ROOT_DIR" in
 	"$PROJECT_DIR"/builds/*/root) ;;
@@ -91,7 +97,8 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	at-spi2-core python3-pyatspi libatk-adaptor \
 	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
-	ntpsec-ntpdate fake-hwclock e2fsprogs ca-certificates nano"
+	ntpsec-ntpdate fake-hwclock util-linux-extra vimb \
+	haveged e2fsprogs ca-certificates nano"
 
 chroot "$ROOT_DIR" /usr/bin/env \
 	DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
@@ -161,6 +168,10 @@ install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-boot-mode"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode" \
 	"$ROOT_DIR/usr/bin/zirarch-boot-mode"
+install -m 755 "$PROJECT_DIR/FieldM/scripts/fieldm-hwprobe" \
+	"$ROOT_DIR/usr/lib/fieldm/hwprobe"
+install -m 755 "$PROJECT_DIR/FieldM/scripts/zirarch-post" \
+	"$ROOT_DIR/usr/bin/zirarch-post"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-session" \
 	"$ROOT_DIR/usr/bin/fieldm-session"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-desktop-launch" \
@@ -172,8 +183,25 @@ chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
 	/usr/src/zirarch/fieldm-hide-keyboard.c
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-terminal" \
 	"$ROOT_DIR/usr/bin/fieldm-terminal"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-early-boot.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-early-boot"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-haveged.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-haveged"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-browser" \
+	"$ROOT_DIR/usr/bin/zirarch-browser"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-clock-sync" \
+	"$ROOT_DIR/usr/bin/zirarch-clock-sync"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-clock-sync.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-clock-sync"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-clock.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-clock"
+mkdir -p "$ROOT_DIR/etc/fieldm"
+install -m 644 "$KERNEL_DIR/boot-mode/vimb.conf" \
+	"$ROOT_DIR/etc/fieldm/vimb.conf"
 install -m 644 "$PROJECT_DIR/FieldM/terminal.desktop" \
 	"$ROOT_DIR/usr/share/applications/terminal.desktop"
+install -m 644 "$KERNEL_DIR/boot-mode/zirarch-browser.desktop" \
+	"$ROOT_DIR/usr/share/applications/zirarch-browser.desktop"
 install -m 644 "$PROJECT_DIR/FieldM/data/packages.desktop" \
 	"$ROOT_DIR/usr/share/applications/packages.desktop"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-x11-refresh.initd" \
@@ -197,6 +225,10 @@ done
 
 cat > "$ROOT_DIR/etc/hostname" <<'EOF'
 on5-debian
+EOF
+cat >> "$ROOT_DIR/etc/rc.conf" <<'EOF'
+
+rc_logger="YES"
 EOF
 cat > "$ROOT_DIR/etc/hosts" <<'EOF'
 127.0.0.1 localhost
@@ -366,53 +398,6 @@ chmod 755 "$ROOT_DIR/etc/init.d/zirarch-sshd"
 
 mkdir -p "$ROOT_DIR/var/lib/zirarch"
 date -u +%s > "$ROOT_DIR/var/lib/zirarch/clock"
-cat > "$ROOT_DIR/etc/init.d/zirarch-clock" <<'EOF'
-#!/sbin/openrc-run
-
-description="Restore the persisted Zirarch clock without an RTC"
-
-depend()
-{
-	before '*'
-}
-
-start()
-{
-	[ -s /var/lib/zirarch/clock ] || return 0
-	read -r saved < /var/lib/zirarch/clock
-	case "$saved" in
-		''|*[!0-9]*) return 1 ;;
-	esac
-	date -u -s "@$saved" >/dev/null
-}
-
-stop()
-{
-	mkdir -p /var/lib/zirarch
-	date -u +%s > /var/lib/zirarch/clock
-}
-EOF
-chmod 755 "$ROOT_DIR/etc/init.d/zirarch-clock"
-
-cat > "$ROOT_DIR/etc/init.d/zirarch-clock-sync" <<'EOF'
-#!/sbin/openrc-run
-
-description="Synchronize the clock over RNDIS and persist it"
-
-depend()
-{
-	need usb-rndis
-	after usb-rndis networking
-}
-
-start()
-{
-	ntpdate -u -s time.cloudflare.com 2>/dev/null &&
-		date -u +%s > /var/lib/zirarch/clock
-	return 0
-}
-EOF
-chmod 755 "$ROOT_DIR/etc/init.d/zirarch-clock-sync"
 
 cat > "$ROOT_DIR/etc/init.d/wifi-link" <<'EOF'
 #!/sbin/openrc-run
@@ -450,19 +435,8 @@ EOF
 chmod 755 "$ROOT_DIR/etc/init.d/wpa-supplicant-zirarch"
 
 mkdir -p "$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d"
-cat > "$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d/zirarch-default-route" <<'EOF'
-#!/bin/sh
-
-case "${reason:-}" in
-	BOUND|RENEW|REBIND|REBOOT)
-		[ "${interface:-}" = wlan0 ] || exit 0
-		set -- ${new_routers:-}
-		[ "$#" -ge 1 ] || exit 0
-		ip route replace default via "$1" dev wlan0 metric 100
-		;;
-esac
-EOF
-chmod 755 "$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d/zirarch-default-route"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-dhclient-hook" \
+	"$ROOT_DIR/etc/dhcp/dhclient-exit-hooks.d/zirarch-default-route"
 
 cat > "$ROOT_DIR/etc/X11/xorg.conf.d/10-on5-fbdev.conf" <<'EOF'
 Section "Device"
@@ -518,7 +492,7 @@ EOF
 for runlevel in sysinit boot default shutdown; do
 	mkdir -p "$ROOT_DIR/etc/runlevels/$runlevel"
 done
-for service in dmesg procfs sysfs; do
+for service in dmesg procfs sysfs zirarch-early-boot zirarch-haveged; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" sysinit
 done

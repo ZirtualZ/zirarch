@@ -1,0 +1,32 @@
+#!/bin/sh
+
+if [ "${1:-}" = --async ]; then
+	nohup "$0" --foreground >/dev/null 2>&1 &
+	exit 0
+fi
+
+state_dir=/var/lib/zirarch
+status=/run/zirarch-clock-status
+lock=/run/zirarch-clock-sync.lock
+
+mkdir -p "$state_dir" /run
+if ! mkdir "$lock" 2>/dev/null; then
+	exit 0
+fi
+trap 'rmdir "$lock" 2>/dev/null || true' EXIT HUP INT TERM
+
+printf '%s\n' not-synced > "$status"
+if /usr/bin/timeout 12 /usr/sbin/ntpdate -u -s time.cloudflare.com; then
+	epoch=$(/bin/date -u +%s)
+	case "$epoch" in
+		''|*[!0-9]*) exit 0 ;;
+	esac
+	printf '%s\n' "$epoch" > "$state_dir/.clock.$$"
+	mv -f "$state_dir/.clock.$$" "$state_dir/clock"
+	printf 'synced %s\n' "$epoch" > "$status"
+	/usr/sbin/fake-hwclock save 2>/dev/null || true
+	/usr/sbin/hwclock --systohc 2>/dev/null || true
+	exit 0
+fi
+
+exit 0

@@ -5,7 +5,15 @@ export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/0}
 export GDK_GL=0
 export GSK_RENDERER=cairo
 export GDK_DPI_SCALE=1
-export GTK_THEME=Adwaita:light
+theme=light
+background='#F4F1EA'
+foreground='#111111'
+if grep -qx 'theme=dark' /root/.config/simple-desktop/features 2>/dev/null; then
+	theme=dark
+	background='#161513'
+	foreground='#EAE6DD'
+fi
+export GTK_THEME="Adwaita:$theme"
 export QT_SCALE_FACTOR=1
 export QT_FONT_DPI=168
 export QT_STYLE_OVERRIDE=Fusion
@@ -36,7 +44,7 @@ done
 sed -i "s#Option \"Device\" \"/dev/input/event[0-9][0-9]*\"#Option \"Device\" \"$touch_device\"#" \
 	/etc/X11/xorg.conf.d/20-on5-touchscreen.conf
 
-cat > /root/.xinitrc <<'EOF'
+cat > /root/.xinitrc <<EOF
 #!/bin/sh
 export XDG_SESSION_TYPE=x11
 export XDG_CURRENT_DESKTOP=FieldM
@@ -48,9 +56,9 @@ Xft.dpi: 168
 Xft.antialias: 1
 Xft.hinting: 1
 Xft.rgba: rgb
-XTerm*background: #F4F1EA
-XTerm*foreground: #111111
-XTerm*cursorColor: #111111
+XTerm*background: $background
+XTerm*foreground: $foreground
+XTerm*cursorColor: $foreground
 XTerm*faceName: DejaVu Sans Mono
 XTerm*faceSize: 11
 XTerm*scrollBar: false

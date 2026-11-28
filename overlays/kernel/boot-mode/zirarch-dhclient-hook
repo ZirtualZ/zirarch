@@ -1,0 +1,13 @@
+#!/bin/sh
+
+case "${reason:-}" in
+	BOUND|RENEW|REBIND|REBOOT)
+		[ "${interface:-}" = wlan0 ] || exit 0
+		set -- ${new_routers:-}
+		if [ "$#" -ge 1 ]; then
+			ip route replace default via "$1" dev wlan0 metric 100
+		fi
+		[ ! -x /usr/bin/zirarch-clock-sync ] ||
+			/usr/bin/zirarch-clock-sync --async
+		;;
+esac
