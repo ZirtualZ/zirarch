@@ -5,6 +5,7 @@
 #include "icon_themes.h"
 #include "launcher.h"
 #include "settings.h"
+#include "session.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -15,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <time.h>
 
 void shell_show_error(GtkWindow *parent, const char *message)
 {
@@ -288,23 +290,80 @@ static gboolean x_events_ready(gint fd, GIOCondition condition, gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
+static void window_manager_exited(GPid pid, gint status, gpointer data);
+
+static gboolean restart_window_manager(gpointer data)
+{
+    ShellState *state = data;
+    state->wm_restart_source = 0;
+    time_t now = time(NULL);
+    if (state->wm_restart_window == 0 ||
+        now - state->wm_restart_window >= 300) {
+        state->wm_restart_window = now;
+        state->wm_restart_count = 0;
+    }
+    if (state->wm_restart_count >= 5) {
+        fprintf(stderr,
+                "Supervisor: simple-wm restart limit reached; recovery required\n");
+        state->window_manager_failed = 1;
+        g_application_quit(G_APPLICATION(state->application));
+        return G_SOURCE_REMOVE;
+    }
+    pid_t manager = session_start_window_manager();
+    if (manager < 0) {
+        fprintf(stderr, "Supervisor: failed to restart simple-wm\n");
+        state->wm_restart_count++;
+        if (state->wm_restart_count < 5) {
+            state->wm_restart_source =
+                g_timeout_add_seconds(2, restart_window_manager, state);
+        } else {
+            state->window_manager_failed = 1;
+            g_application_quit(G_APPLICATION(state->application));
+        }
+        return G_SOURCE_REMOVE;
+    }
+    state->window_manager = manager;
+    state->wm_started = time(NULL);
+    fprintf(stderr, "Supervisor: restarted simple-wm pid=%ld\n", (long)manager);
+    state->wm_source = g_child_watch_add(
+        manager, window_manager_exited, state);
+    return G_SOURCE_REMOVE;
+}
+
 static void window_manager_exited(GPid pid, gint status, gpointer data)
 {
     ShellState *state = data;
+    time_t ended = time(NULL);
+    time_t elapsed = state->wm_started > 0
+        ? ended - state->wm_started : 0;
     state->window_manager = -1;
-    state->window_manager_failed = 1;
     state->wm_source = 0;
     if (WIFEXITED(status)) {
-        fprintf(stderr, "The window manager exited with status %d.\n",
-                WEXITSTATUS(status));
+        fprintf(stderr,
+                "Supervisor: simple-wm pid=%ld exit_status=%d elapsed=%lds\n",
+                (long)pid, WEXITSTATUS(status), (long)elapsed);
     } else if (WIFSIGNALED(status)) {
-        fprintf(stderr, "The window manager stopped on signal %d.\n",
-                WTERMSIG(status));
+        fprintf(stderr,
+                "Supervisor: simple-wm pid=%ld exit_signal=%d elapsed=%lds\n",
+                (long)pid, WTERMSIG(status), (long)elapsed);
     } else {
-        fprintf(stderr, "The window manager stopped unexpectedly.\n");
+        fprintf(stderr,
+                "Supervisor: simple-wm pid=%ld stopped unexpectedly elapsed=%lds\n",
+                (long)pid, (long)elapsed);
     }
     g_spawn_close_pid(pid);
-    g_application_quit(G_APPLICATION(state->application));
+    state->wm_restart_count++;
+    if (state->wm_restart_count >= 5) {
+        fprintf(stderr,
+                "Supervisor: simple-wm restart limit reached; recovery required\n");
+        state->window_manager_failed = 1;
+        g_application_quit(G_APPLICATION(state->application));
+        return;
+    }
+    if (state->wm_restart_source == 0) {
+        state->wm_restart_source =
+            g_timeout_add_seconds(2, restart_window_manager, state);
+    }
 }
 
 static void create_command_window(ShellState *state)
@@ -367,6 +426,8 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
     state->top_panel = 1;
     state->taskbar = 1;
     state->window_manager = window_manager;
+    state->wm_started = window_manager > 0 ? time(NULL) : 0;
+    state->wm_restart_window = state->wm_started;
     state->xdisplay = XOpenDisplay(NULL);
     if (state->xdisplay == NULL) {
         fprintf(stderr, "Could not connect to the X11 display.\n");
@@ -389,6 +450,9 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
     }
     if (state->wm_source != 0) {
         g_source_remove(state->wm_source);
+    }
+    if (state->wm_restart_source != 0) {
+        g_source_remove(state->wm_restart_source);
     }
     if (state->status_source != 0) {
         g_source_remove(state->status_source);

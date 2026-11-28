@@ -2,6 +2,14 @@
 
 Use this file as the operational guide for connecting, compiling, flashing,
 and inspecting the connected Samsung Galaxy On5 SM-G550T.
+## Access & workflow: LIVE UPDATES ONLY
+    ssh -i /home/marshal/.ssh/zirarch_ed25519 root@192.168.7.2
+Tag the current state locally as `fieldm-paper-v1` first. Edit on the host,
+rsync FieldM/ to /root/FieldM, build on the phone, install, restart the
+session. Never rebuild images, flash, or write to partitions. After every
+stage: take a root-window screenshot on the device
+(DISPLAY=:0 import -window root /tmp/s.png), scp it to the host, LOOK AT
+IT yourself, fix what's wrong, then tell me what to test.
 
 ## Bootstrap and build
 

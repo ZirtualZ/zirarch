@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -33,6 +34,7 @@ enum {
 typedef struct {
     int fd;
     int touchscreen;
+    char path[320];
 } InputDevice;
 
 static FILE *log_file;
@@ -50,6 +52,31 @@ static int power_suppressed;
 static int volume_up_suppressed;
 static unsigned long long power_pressed_at;
 static unsigned long long combo_started_at;
+
+static void log_message(const char *format, ...);
+
+static void reap_children(void)
+{
+    int status;
+    pid_t child;
+    for (;;) {
+        do {
+            child = waitpid(-1, &status, WNOHANG);
+        } while (child < 0 && errno == EINTR);
+        if (child <= 0) {
+            break;
+        }
+        if (WIFEXITED(status)) {
+            log_message("child pid=%ld exit_status=%d",
+                        (long)child, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            log_message("child pid=%ld exit_signal=%d",
+                        (long)child, WTERMSIG(status));
+        } else {
+            log_message("child pid=%ld exited", (long)child);
+        }
+    }
+}
 
 static unsigned long long monotonic_ms(void)
 {
@@ -75,6 +102,18 @@ static void log_message(const char *format, ...)
 {
     if (log_file == NULL) {
         return;
+    }
+    fflush(log_file);
+    struct stat log_stat;
+    if (fstat(fileno(log_file), &log_stat) == 0 &&
+        log_stat.st_size > 1048576) {
+        fclose(log_file);
+        rename("/var/log/fieldm-keys.log",
+               "/var/log/fieldm-keys.log.1");
+        log_file = fopen("/var/log/fieldm-keys.log", "a");
+        if (log_file == NULL) {
+            return;
+        }
     }
     time_t now = time(NULL);
     struct tm local;
@@ -151,12 +190,16 @@ static void toggle_power(void)
         set_touchscreen_grab(1);
         log_message("screen blanked");
     } else {
+        set_touchscreen_grab(0);
         int brightness = read_integer_file(state_path, 134);
         write_integer_file(fb_path, 0);
         write_integer_file(brightness_path, brightness > 0 ? brightness : 134);
         unlink(state_path);
         screen_blanked = 0;
-        set_touchscreen_grab(0);
+        char discard[64];
+        while (read(touchscreen_fd, discard, sizeof(discard)) > 0) {
+        }
+        log_message("drained queued touch events");
         log_message("screen unblanked");
     }
 }
@@ -385,6 +428,8 @@ static int collect_session_processes(pid_t *pids, size_t capacity)
     }
     size_t count = 0;
     struct dirent *entry;
+    pid_t targets[256];
+    size_t target_count = 0;
     while (count < capacity && (entry = readdir(proc)) != NULL) {
         char *end = NULL;
         long value = strtol(entry->d_name, &end, 10);
@@ -394,6 +439,70 @@ static int collect_session_processes(pid_t *pids, size_t capacity)
         }
         if (process_is_target((pid_t)value)) {
             pids[count++] = (pid_t)value;
+            if (target_count < sizeof(targets) / sizeof(targets[0])) {
+                targets[target_count++] = (pid_t)value;
+            }
+        }
+    }
+    rewinddir(proc);
+    while (count < capacity && (entry = readdir(proc)) != NULL) {
+        char *end = NULL;
+        long value = strtol(entry->d_name, &end, 10);
+        if (end == entry->d_name || *end != '\0' || value <= 1 ||
+            value == (long)getpid()) {
+            continue;
+        }
+        pid_t candidate = (pid_t)value;
+        pid_t parent = candidate;
+        int descendant = 0;
+        for (int depth = 0; depth < 32; ++depth) {
+            char path[64], stat[1024];
+            snprintf(path, sizeof(path), "/proc/%ld/stat", (long)parent);
+            FILE *file = fopen(path, "r");
+            if (file == NULL ||
+                fgets(stat, sizeof(stat), file) == NULL) {
+                if (file != NULL) fclose(file);
+                break;
+            }
+            fclose(file);
+            char *close_paren = strrchr(stat, ')');
+            if (close_paren == NULL) {
+                break;
+            }
+            unsigned long long dummy;
+            char state;
+            pid_t ppid = 0;
+            if (sscanf(close_paren + 2, "%c %d %llu", &state,
+                       &ppid, &dummy) != 3) {
+                break;
+            }
+            int matches = 0;
+            for (size_t i = 0; i < target_count; ++i) {
+                if (parent == targets[i]) {
+                    matches = 1;
+                    break;
+                }
+            }
+            if (matches) {
+                descendant = 1;
+                break;
+            }
+            if (ppid <= 1 || ppid == parent) {
+                break;
+            }
+            parent = ppid;
+        }
+        if (descendant) {
+            int duplicate = 0;
+            for (size_t i = 0; i < count; ++i) {
+                if (pids[i] == candidate) {
+                    duplicate = 1;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                pids[count++] = candidate;
+            }
         }
     }
     closedir(proc);
@@ -414,6 +523,38 @@ static void clear_keyboard_leases(void)
             log_message("cannot remove %s: %s", paths[i], strerror(errno));
         }
     }
+}
+
+static int old_xorg_alive(void)
+{
+    DIR *proc = opendir("/proc");
+    if (proc == NULL) {
+        return 0;
+    }
+    struct dirent *entry;
+    int alive = 0;
+    while ((entry = readdir(proc)) != NULL) {
+        char path[64], comm[64];
+        char *end = NULL;
+        long value = strtol(entry->d_name, &end, 10);
+        if (end == entry->d_name || *end != '\0' || value <= 1) {
+            continue;
+        }
+        snprintf(path, sizeof(path), "/proc/%ld/comm", value);
+        FILE *file = fopen(path, "r");
+        if (file != NULL) {
+            if (fgets(comm, sizeof(comm), file) != NULL &&
+                strcmp(comm, "Xorg\n") == 0) {
+                alive = 1;
+            }
+            fclose(file);
+        }
+        if (alive) {
+            break;
+        }
+    }
+    closedir(proc);
+    return alive;
 }
 
 static void screen_feedback(void)
@@ -468,6 +609,15 @@ static void restart_gui_session(void)
             }
         }
     }
+    unsigned long long x_deadline = monotonic_ms() + 2000;
+    while (old_xorg_alive() && monotonic_ms() < x_deadline) {
+        sleep_ms(50);
+    }
+    if (old_xorg_alive()) {
+        log_message("old Xorg is still present after bounded termination");
+    } else {
+        log_message("verified old Xorg gone");
+    }
     FILE *mode = fopen("/run/zirarch-boot-mode", "w");
     if (mode != NULL) {
         fputs("gui\n", mode);
@@ -488,12 +638,39 @@ static void restart_gui_session(void)
         log_message("cannot fork OpenRC restart: %s", strerror(errno));
     } else {
         log_message("requested rc-service zirarch-boot-mode restart");
+        unsigned long long reap_deadline = monotonic_ms() + 2000;
+        int status;
+        pid_t reaped;
+        for (;;) {
+            reaped = waitpid(child, &status, WNOHANG);
+            if (reaped == child) {
+                if (WIFEXITED(status)) {
+                    log_message("OpenRC restart child exit_status=%d",
+                                WEXITSTATUS(status));
+                } else if (WIFSIGNALED(status)) {
+                    log_message("OpenRC restart child exit_signal=%d",
+                                WTERMSIG(status));
+                }
+                break;
+            }
+            if (reaped < 0 && errno != EINTR) {
+                break;
+            }
+            if (monotonic_ms() >= reap_deadline) {
+                log_message("OpenRC restart child did not exit within 2 seconds");
+                break;
+            }
+            sleep_ms(50);
+        }
     }
 }
 
 static void update_key_state(int device, unsigned int code, int value,
                              unsigned long long now)
 {
+    if (value == 2) {
+        return;
+    }
     int is_new_press = value == 1 &&
         code <= KEY_MAX && !held_keys[device][code];
     if (code <= KEY_MAX && value == 1) {
@@ -598,6 +775,30 @@ static int device_name(const char *event_name, char *name, size_t size)
     return found;
 }
 
+static void remove_input_device(int index)
+{
+    if (index < 0 || index >= input_device_count) {
+        return;
+    }
+    if (touchscreen_fd == input_devices[index].fd) {
+        touchscreen_fd = -1;
+        touchscreen_grabbed = 0;
+    }
+    close(input_devices[index].fd);
+    log_message("closed unavailable input device %s",
+                input_devices[index].path);
+    memset(held_keys[index], 0, sizeof(held_keys[index]));
+    for (int i = index; i + 1 < input_device_count; ++i) {
+        input_devices[i] = input_devices[i + 1];
+        memcpy(held_keys[i], held_keys[i + 1], sizeof(held_keys[i]));
+    }
+    --input_device_count;
+    memset(&input_devices[input_device_count], 0,
+           sizeof(input_devices[input_device_count]));
+    memset(held_keys[input_device_count], 0,
+           sizeof(held_keys[input_device_count]));
+}
+
 static void open_input_devices(void)
 {
     DIR *dir = opendir("/dev/input");
@@ -617,6 +818,17 @@ static void open_input_devices(void)
         if (fd < 0) {
             continue;
         }
+        int existing = 0;
+        for (int i = 0; i < input_device_count; ++i) {
+            if (strcmp(input_devices[i].path, path) == 0) {
+                existing = 1;
+                break;
+            }
+        }
+        if (existing) {
+            close(fd);
+            continue;
+        }
         unsigned long evbits[(EV_MAX + 1 + 8 * sizeof(unsigned long) - 1) /
                              (8 * sizeof(unsigned long))] = {0};
         if (ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits) < 0 ||
@@ -629,6 +841,10 @@ static void open_input_devices(void)
                           strcmp(name, "sec_touchscreen") == 0;
         input_devices[input_device_count].fd = fd;
         input_devices[input_device_count].touchscreen = touchscreen;
+        snprintf(input_devices[input_device_count].path,
+                 sizeof(input_devices[input_device_count].path), "%s", path);
+        memset(held_keys[input_device_count], 0,
+               sizeof(held_keys[input_device_count]));
         if (touchscreen) {
             touchscreen_fd = fd;
         }
@@ -646,7 +862,13 @@ static void open_input_devices(void)
 
 int main(void)
 {
-    signal(SIGCHLD, SIG_IGN);
+    struct stat log_stat;
+    if (stat("/var/log/fieldm-keys.log", &log_stat) == 0 &&
+        log_stat.st_size > 1048576) {
+        rename("/var/log/fieldm-keys.log",
+               "/var/log/fieldm-keys.log.1");
+    }
+    signal(SIGCHLD, SIG_DFL);
     log_file = fopen("/var/log/fieldm-keys.log", "a");
     if (log_file == NULL) {
         perror("fieldm-keys: cannot open /var/log/fieldm-keys.log");
@@ -661,7 +883,9 @@ int main(void)
     log_message("started independently of X; blanked=%d", screen_blanked);
 
     struct pollfd polls[MAX_INPUT_DEVICES];
+    unsigned long long refresh_deadline = monotonic_ms() + 1000;
     for (;;) {
+        reap_children();
         for (int i = 0; i < input_device_count; ++i) {
             polls[i].fd = input_devices[i].fd;
             polls[i].events = POLLIN;
@@ -674,6 +898,11 @@ int main(void)
         }
         if (ready > 0) {
             for (int i = 0; i < input_device_count; ++i) {
+                if (polls[i].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+                    remove_input_device(i);
+                    --i;
+                    continue;
+                }
                 if (!(polls[i].revents & POLLIN)) {
                     continue;
                 }
@@ -693,6 +922,11 @@ int main(void)
                 }
             }
         }
-        check_restart_combo(monotonic_ms());
+        unsigned long long now = monotonic_ms();
+        check_restart_combo(now);
+        if (now >= refresh_deadline) {
+            open_input_devices();
+            refresh_deadline = now + 1000;
+        }
     }
 }

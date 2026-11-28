@@ -7,7 +7,6 @@ pidfile="/run/zirarch-boot-mode.pid"
 
 depend()
 {
-	need devfs
 	after local networking
 }
 

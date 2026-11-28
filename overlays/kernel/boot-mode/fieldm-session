@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -u
 
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/0}
 export GDK_GL=0
@@ -11,12 +11,54 @@ export QT_FONT_DPI=168
 export QT_STYLE_OVERRIDE=Fusion
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
-dbus-uuidgen --ensure
+dbus-uuidgen --ensure 2>/dev/null || :
+
+STATE=/run/fieldm-supervisor-state
+LOG=/var/log/fieldm-session.log
+mkdir -p /run /var/log
+touch "$LOG"
+
+rotate_log()
+{
+	size=$(wc -c < "$LOG" 2>/dev/null || echo 0)
+	case "$size" in ''|*[!0-9]*) size=0 ;; esac
+	if [ "$size" -gt 1048576 ]; then
+		mv -f "$LOG" "$LOG.1" 2>/dev/null || :
+		touch "$LOG"
+	fi
+}
+
+log()
+{
+	rotate_log
+	printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$*" >> "$LOG"
+}
+
+write_state()
+{
+	printf '%s\n' "$1" > "$STATE"
+}
+
+enter_recovery()
+{
+	write_state recovery
+	log "bounded supervisor entered recovery; starting framebuffer console"
+	rc-service zirarch-x11-refresh stop >/dev/null 2>&1 || :
+	pkill -TERM -x Xorg 2>/dev/null || :
+	sleep 1
+	pkill -KILL -x Xorg 2>/dev/null || :
+	printf '\033[2J\033[H' > /dev/tty1 2>/dev/null || :
+	chvt 1 2>/dev/null || :
+	if [ -x /usr/bin/zirarch-fbconsole ]; then
+		exec /usr/bin/zirarch-fbconsole
+	fi
+	exit 1
+}
 
 if [ ! -x /usr/bin/simple-desktop ] &&
    [ ! -x /usr/local/bin/simple-desktop ]; then
-	echo "fieldm-session: simple-desktop is not installed" >&2
-	exit 1
+	log "simple-desktop is not installed"
+	enter_recovery
 fi
 
 touch_device=
@@ -52,7 +94,67 @@ xrandr --output default --mode 720x1280 2>/dev/null || true
 exec dbus-run-session -- /usr/bin/fieldm-desktop-launch
 EOF
 chmod 700 /root/.xinitrc
-startx /root/.xinitrc -- :0 vt1 -nolisten tcp
-status=$?
-rc-service zirarch-x11-refresh stop >/dev/null 2>&1 || true
-exit "$status"
+
+failures=0
+window_start=$(date +%s 2>/dev/null || echo 0)
+while :; do
+	now=$(date +%s 2>/dev/null || echo 0)
+	if [ $((now - window_start)) -ge 300 ]; then
+		failures=0
+		window_start=$now
+	fi
+	if [ "$failures" -ge 5 ]; then
+		enter_recovery
+	fi
+
+	write_state starting-x
+	started=$(date +%s 2>/dev/null || echo 0)
+	startx /root/.xinitrc -- :0 vt1 -nolisten tcp >/var/log/fieldm-startx.log 2>&1 &
+	session_pid=$!
+	echo "$session_pid" >/run/fieldm-session.pid
+	log "started X session pid=$session_pid"
+
+	check_deadline=$((started + 20))
+	while [ "$(date +%s 2>/dev/null || echo 0)" -lt "$check_deadline" ]; do
+		if ! kill -0 "$session_pid" 2>/dev/null; then break; fi
+		if pgrep -x Xorg >/dev/null 2>&1; then
+			write_state running
+			break
+		fi
+		sleep 1
+	done
+
+	while kill -0 "$session_pid" 2>/dev/null; do
+		sleep 2
+		if ! pgrep -x Xorg >/dev/null 2>&1; then
+			write_state missing-x
+			log "Xorg died while session pid=$session_pid; restarting X only"
+			kill -TERM "$session_pid" 2>/dev/null || :
+			break
+		fi
+		if [ -e /run/fieldm-keyboard/manual ] ||
+		   [ -e /run/fieldm-keyboard/entry ] ||
+		   [ -e /run/fieldm-keyboard/terminal ]; then
+			if ! pgrep -x fieldm-kbd >/dev/null 2>&1 &&
+			   ! pgrep -f "svkbd-mobile-intl|svkbd" >/dev/null 2>&1; then
+				write_state keyboard-restart
+				log "fieldm-kbd missing; restarting keyboard component"
+				/usr/bin/fieldm-keyboard warm >/dev/null 2>&1 || :
+			fi
+		fi
+	done
+
+	if kill -0 "$session_pid" 2>/dev/null; then
+		kill -TERM "$session_pid" 2>/dev/null || :
+		sleep 1
+		kill -KILL "$session_pid" 2>/dev/null || :
+	fi
+	wait "$session_pid" 2>/dev/null
+	status=$?
+	ended=$(date +%s 2>/dev/null || echo 0)
+	log "X session pid=$session_pid exit_status=$status elapsed=$((ended-started))s"
+	rc-service zirarch-x11-refresh stop >/dev/null 2>&1 || :
+	failures=$((failures + 1))
+	write_state restart-limited
+	sleep 2
+done

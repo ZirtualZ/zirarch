@@ -74,6 +74,10 @@ typedef struct {
     int taskbar;
     pid_t window_manager;
     int window_manager_failed;
+    int wm_restart_count;
+    time_t wm_restart_window;
+    time_t wm_started;
+    guint wm_restart_source;
     guint x_source;
     guint wm_source;
     guint status_source;

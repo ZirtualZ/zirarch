@@ -10,11 +10,13 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 int main(int argc, char **argv)
 {
     int own_session = argc > 1 && strcmp(argv[1], "--x-session") == 0;
+    time_t started = time(NULL);
     const char *display = getenv("DISPLAY");
     if (!own_session &&
         ((display == NULL || display[0] == '\0') ||
@@ -29,6 +31,11 @@ int main(int argc, char **argv)
     pid_t window_manager = own_session
         ? session_start_window_manager() : -1;
     if (own_session && window_manager < 0) {
+        FILE *state = fopen("/run/fieldm-supervisor-state", "w");
+        if (state != NULL) {
+            fputs("window-manager-restart-failed\n", state);
+            fclose(state);
+        }
         return 1;
     }
 
@@ -54,6 +61,15 @@ int main(int argc, char **argv)
             }
             break;
         }
+    }
+    time_t ended = time(NULL);
+    fprintf(stderr,
+            "Supervisor: simple-desktop exit_status=%d elapsed=%lds pid=%ld\n",
+            result, (long)(ended - started), (long)getpid());
+    FILE *state = fopen("/run/fieldm-supervisor-state", "w");
+    if (state != NULL) {
+        fputs(result == 0 ? "desktop-exited\n" : "desktop-failed\n", state);
+        fclose(state);
     }
     return result;
 }

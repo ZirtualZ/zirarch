@@ -13,4 +13,10 @@ depend()
 start_pre()
 {
 	touch /var/log/fieldm-keys.log
+	size=$(wc -c < /var/log/fieldm-keys.log 2>/dev/null || echo 0)
+	case "$size" in ''|*[!0-9]*) size=0 ;; esac
+	if [ "$size" -gt 1048576 ]; then
+		mv -f /var/log/fieldm-keys.log /var/log/fieldm-keys.log.1 2>/dev/null || :
+		touch /var/log/fieldm-keys.log
+	fi
 }
