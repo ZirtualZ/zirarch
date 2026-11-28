@@ -1,16 +1,52 @@
 #!/bin/sh
 set -u
 
-mode=${ZIRARCH_BOOT_MODE:-}
-if [ -z "$mode" ] && [ -r /run/zirarch-boot-mode ]; then
-	mode=$(cat /run/zirarch-boot-mode)
-fi
-if [ -z "$mode" ]; then
-	/usr/bin/zirarch-fbconsole --boot-menu
-	case $? in
-		2) mode=gui ;;
-		*) mode=tty ;;
-	esac
+BOOT_UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)
+mkdir -p /var/log
+: >>/var/log/zirarch-boot-timing.log
+printf 'boot_mode_start=%s\n' "$BOOT_UPTIME" \
+	>>/var/log/zirarch-boot-timing.log
+
+mode=gui
+volume_down_held()
+{
+	for event in /dev/input/event*; do
+		name=
+		for sysfs in /sys/class/input/"${event##*/}"/device/name \
+			/sys/class/input/"${event##*/}"/device/name; do
+			[ -r "$sysfs" ] && name=$(cat "$sysfs" 2>/dev/null)
+		done
+		case "$name" in
+			*gpio*key*|*gpio-keys*|*sec_powerkey*|*Power*Key*)
+				[ -r "$event" ] || continue
+				timeout 1 python3 - "$event" <<'PY'
+import fcntl, select, struct, sys
+try:
+    fd = open(sys.argv[1], "rb", buffering=0)
+except OSError:
+    raise SystemExit(1)
+ready, _, _ = select.select([fd], [], [], 1.0)
+if not ready:
+    raise SystemExit(1)
+while ready:
+    data = fd.read(16)
+    if len(data) != 16:
+        break
+    sec, usec, kind, code, value = struct.unpack("llHHi", data)
+    if kind == 1 and code == 114 and value in (1, 2):
+        raise SystemExit(0)
+    ready, _, _ = select.select([fd], [], [], 0.05)
+raise SystemExit(1)
+PY
+				[ $? -eq 0 ] && return 0
+				;;
+		esac
+	done
+	return 1
+}
+
+if volume_down_held; then
+	mode=tty
 fi
 
 printf '%s\n' "$mode" > /run/zirarch-boot-mode
@@ -34,6 +70,8 @@ case "$mode" in
 			/usr/bin/zirarch-post --boot
 		start-stop-daemon --stop --name zirarch-fbconsole 2>/dev/null || true
 		sleep 1
+		printf 'fieldm_start=%s\n' "$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)" \
+			>>/var/log/zirarch-boot-timing.log
 		exec /usr/bin/fieldm-session
 		;;
 	tty)
