@@ -1,5 +1,26 @@
 #!/bin/sh
-exec /usr/bin/xterm \
+state_dir=/run/fieldm-keyboard
+mkdir -p "$state_dir"
+touch "$state_dir/terminal"
+/usr/bin/fieldm-keyboard terminal on
+
+title=Terminal
+if [ "${1:-}" = htop ]; then
+	title=htop
+elif [ "${1:-}" = btop ]; then
+	title=btop
+fi
+
+cleanup()
+{
+	if ! pgrep -x xterm >/dev/null 2>&1; then
+		rm -f "$state_dir/terminal"
+		/usr/bin/fieldm-keyboard terminal off
+	fi
+}
+trap cleanup EXIT HUP INT TERM
+
+/usr/bin/xterm \
 	-fa "DejaVu Sans Mono:size=13" \
 	-fs 13 \
 	-bg "#0b1018" \
@@ -7,6 +28,10 @@ exec /usr/bin/xterm \
 	-cr "#6fd3b9" \
 	-sb -rightbar -sl 10000 \
 	-b 8 \
-	-title "Terminal" \
+	-title "$title" \
 	-geometry 72x28 \
 	"$@"
+status=$?
+cleanup
+trap - EXIT HUP INT TERM
+exit "$status"

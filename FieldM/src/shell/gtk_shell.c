@@ -5,10 +5,10 @@
 #include "icon_themes.h"
 #include "launcher.h"
 #include "settings.h"
-#include "session.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
+#include <gdk/x11/gdkx.h>
 
 #include <errno.h>
 #include <glib-unix.h>
@@ -70,9 +70,6 @@ static void load_settings(ShellState *state)
         if (sscanf(line, "top_panel=%d", &enabled) == 1 &&
             (enabled == 0 || enabled == 1)) {
             state->top_panel = enabled;
-        } else if (sscanf(line, "taskbar=%d", &enabled) == 1 &&
-                   (enabled == 0 || enabled == 1)) {
-            state->taskbar = enabled;
         } else if (strncmp(line, "icon_theme=", 11) == 0) {
             line[strcspn(line, "\r\n")] = '\0';
             if (strlen(line + 11) < sizeof(state->icon_theme_id)) {
@@ -86,10 +83,6 @@ static void load_settings(ShellState *state)
 
 void shell_publish_features(ShellState *state)
 {
-    unsigned long features = state->taskbar ? 1UL : 0UL;
-    XChangeProperty(state->xdisplay, DefaultRootWindow(state->xdisplay),
-                    state->feature_atom, XA_CARDINAL, 32, PropModeReplace,
-                    (unsigned char *)&features, 1);
     XFlush(state->xdisplay);
 }
 
@@ -125,9 +118,9 @@ int shell_save_settings(ShellState *state)
         return 0;
     }
     int failed = fprintf(file,
-                         "top_panel=%d\ntaskbar=%d\n"
+                         "top_panel=%d\n"
                          "icon_theme=%s\n",
-                         state->top_panel, state->taskbar,
+                         state->top_panel,
                          state->icon_theme_id) < 0;
     if (fclose(file) != 0) {
         failed = 1;
@@ -199,6 +192,129 @@ int shell_keyboard_command(const char *lease, const char *action)
     return 1;
 }
 
+typedef struct {
+    ShellState *state;
+    Window client;
+} CloseTimeout;
+
+static gboolean close_timeout(gpointer data)
+{
+    CloseTimeout *timeout = data;
+    XWindowAttributes attributes;
+    if (timeout != NULL && timeout->state != NULL &&
+        XGetWindowAttributes(timeout->state->xdisplay,
+                             timeout->client, &attributes) &&
+        attributes.map_state != IsUnmapped) {
+        XKillClient(timeout->state->xdisplay, timeout->client);
+        XFlush(timeout->state->xdisplay);
+    }
+    g_free(timeout);
+    return G_SOURCE_REMOVE;
+}
+
+static Window active_window(ShellState *state)
+{
+    Atom active_atom = XInternAtom(state->xdisplay,
+                                   "_NET_ACTIVE_WINDOW", False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long count;
+    unsigned long bytes_after;
+    unsigned char *value = NULL;
+    Window active = None;
+    if (XGetWindowProperty(state->xdisplay,
+                           DefaultRootWindow(state->xdisplay),
+                           active_atom, 0, 1, False, XA_WINDOW,
+                           &actual_type, &actual_format, &count,
+                           &bytes_after, &value) == Success &&
+        value != NULL && actual_type == XA_WINDOW &&
+        actual_format == 32 && count == 1) {
+        active = *(Window *)value;
+    }
+    if (value != NULL) XFree(value);
+    if (active == None) {
+        Window focus = None;
+        int revert = 0;
+        XGetInputFocus(state->xdisplay, &focus, &revert);
+        if (focus != None && focus != PointerRoot) active = focus;
+    }
+    return active;
+}
+
+static void show_desktop(ShellState *state)
+{
+    if (state->recents != NULL) recents_close(state);
+    if (state->launcher != NULL) launcher_close(state);
+    if (state->settings != NULL) {
+        gtk_widget_set_visible(state->settings, FALSE);
+    }
+    shell_keyboard_command("manual", "off");
+    unsigned long showing = 1;
+    XChangeProperty(state->xdisplay,
+                    DefaultRootWindow(state->xdisplay),
+                    XInternAtom(state->xdisplay, "_NET_SHOWING_DESKTOP", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)&showing, 1);
+    if (state->desktop_window != NULL) {
+        GdkSurface *surface =
+            gtk_native_get_surface(GTK_NATIVE(state->desktop_window));
+        if (surface != NULL && GDK_IS_X11_SURFACE(surface)) {
+            G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+            Window desktop = gdk_x11_surface_get_xid(surface);
+            G_GNUC_END_IGNORE_DEPRECATIONS
+            XRaiseWindow(state->xdisplay, desktop);
+            XSetInputFocus(state->xdisplay, desktop,
+                           RevertToPointerRoot, CurrentTime);
+        }
+    }
+    XFlush(state->xdisplay);
+}
+
+static void close_active_client(ShellState *state)
+{
+    Window client = active_window(state);
+    if (client == None) {
+        show_desktop(state);
+        return;
+    }
+    Atom protocols = XInternAtom(state->xdisplay, "WM_PROTOCOLS", False);
+    Atom delete_window =
+        XInternAtom(state->xdisplay, "WM_DELETE_WINDOW", False);
+    Atom *supported = NULL;
+    int protocol_count = 0;
+    int supports_delete =
+        XGetWMProtocols(state->xdisplay, client,
+                        &supported, &protocol_count);
+    int found = 0;
+    for (int i = 0; supports_delete && i < protocol_count; ++i) {
+        if (supported[i] == delete_window) {
+            found = 1;
+            break;
+        }
+    }
+    if (supported != NULL) XFree(supported);
+    if (found) {
+        XEvent event;
+        memset(&event, 0, sizeof(event));
+        event.xclient.type = ClientMessage;
+        event.xclient.window = client;
+        event.xclient.message_type = protocols;
+        event.xclient.format = 32;
+        event.xclient.data.l[0] = (long)delete_window;
+        event.xclient.data.l[1] = CurrentTime;
+        XSendEvent(state->xdisplay, client, False, NoEventMask,
+                   (XEvent *)&event);
+    } else {
+        XKillClient(state->xdisplay, client);
+    }
+    XFlush(state->xdisplay);
+    CloseTimeout *timeout = g_new0(CloseTimeout, 1);
+    timeout->state = state;
+    timeout->client = client;
+    g_timeout_add(3000, close_timeout, timeout);
+    show_desktop(state);
+}
+
 static void process_x_events(ShellState *state)
 {
     while (XPending(state->xdisplay) > 0) {
@@ -243,20 +359,13 @@ static void process_x_events(ShellState *state)
         } else if (event.type == ClientMessage &&
                    event.xclient.window == state->command_window &&
                    event.xclient.message_type == state->command_atom &&
-                   (event.xclient.data.l[0] == 7 ||
-                    event.xclient.data.l[0] == 8)) {
-            XClientMessageEvent message;
-            memset(&message, 0, sizeof(message));
-            message.type = ClientMessage;
-            message.window = DefaultRootWindow(state->xdisplay);
-            message.message_type = state->command_atom;
-            message.format = 32;
-            message.data.l[0] = event.xclient.data.l[0];
-            XSendEvent(state->xdisplay,
-                       DefaultRootWindow(state->xdisplay),
-                       False, SubstructureNotifyMask,
-                       (XEvent *)&message);
-            XFlush(state->xdisplay);
+                   event.xclient.data.l[0] == 3) {
+            show_desktop(state);
+        } else if (event.type == ClientMessage &&
+                   event.xclient.window == state->command_window &&
+                   event.xclient.message_type == state->command_atom &&
+                   event.xclient.data.l[0] == 7) {
+            close_active_client(state);
         } else if (event.type == ClientMessage &&
                    event.xclient.window == state->command_window &&
                    event.xclient.message_type == state->command_atom &&
@@ -321,82 +430,6 @@ static gboolean x_events_ready(gint fd, GIOCondition condition, gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
-static void window_manager_exited(GPid pid, gint status, gpointer data);
-
-static gboolean restart_window_manager(gpointer data)
-{
-    ShellState *state = data;
-    state->wm_restart_source = 0;
-    time_t now = time(NULL);
-    if (state->wm_restart_window == 0 ||
-        now - state->wm_restart_window >= 300) {
-        state->wm_restart_window = now;
-        state->wm_restart_count = 0;
-    }
-    if (state->wm_restart_count >= 5) {
-        fprintf(stderr,
-                "Supervisor: simple-wm restart limit reached; recovery required\n");
-        state->window_manager_failed = 1;
-        g_application_quit(G_APPLICATION(state->application));
-        return G_SOURCE_REMOVE;
-    }
-    pid_t manager = session_start_window_manager();
-    if (manager < 0) {
-        fprintf(stderr, "Supervisor: failed to restart simple-wm\n");
-        state->wm_restart_count++;
-        if (state->wm_restart_count < 5) {
-            state->wm_restart_source =
-                g_timeout_add_seconds(2, restart_window_manager, state);
-        } else {
-            state->window_manager_failed = 1;
-            g_application_quit(G_APPLICATION(state->application));
-        }
-        return G_SOURCE_REMOVE;
-    }
-    state->window_manager = manager;
-    state->wm_started = time(NULL);
-    fprintf(stderr, "Supervisor: restarted simple-wm pid=%ld\n", (long)manager);
-    state->wm_source = g_child_watch_add(
-        manager, window_manager_exited, state);
-    return G_SOURCE_REMOVE;
-}
-
-static void window_manager_exited(GPid pid, gint status, gpointer data)
-{
-    ShellState *state = data;
-    time_t ended = time(NULL);
-    time_t elapsed = state->wm_started > 0
-        ? ended - state->wm_started : 0;
-    state->window_manager = -1;
-    state->wm_source = 0;
-    if (WIFEXITED(status)) {
-        fprintf(stderr,
-                "Supervisor: simple-wm pid=%ld exit_status=%d elapsed=%lds\n",
-                (long)pid, WEXITSTATUS(status), (long)elapsed);
-    } else if (WIFSIGNALED(status)) {
-        fprintf(stderr,
-                "Supervisor: simple-wm pid=%ld exit_signal=%d elapsed=%lds\n",
-                (long)pid, WTERMSIG(status), (long)elapsed);
-    } else {
-        fprintf(stderr,
-                "Supervisor: simple-wm pid=%ld stopped unexpectedly elapsed=%lds\n",
-                (long)pid, (long)elapsed);
-    }
-    g_spawn_close_pid(pid);
-    state->wm_restart_count++;
-    if (state->wm_restart_count >= 5) {
-        fprintf(stderr,
-                "Supervisor: simple-wm restart limit reached; recovery required\n");
-        state->window_manager_failed = 1;
-        g_application_quit(G_APPLICATION(state->application));
-        return;
-    }
-    if (state->wm_restart_source == 0) {
-        state->wm_restart_source =
-            g_timeout_add_seconds(2, restart_window_manager, state);
-    }
-}
-
 static void create_command_window(ShellState *state)
 {
     int screen = DefaultScreen(state->xdisplay);
@@ -407,8 +440,6 @@ static void create_command_window(ShellState *state)
                                       "_FIELD_DESKTOP_COMMAND", False);
     state->owner_atom = XInternAtom(state->xdisplay,
                                     "_FIELD_DESKTOP_COMMAND_OWNER", False);
-    state->feature_atom = XInternAtom(state->xdisplay,
-                                      "_FIELD_DESKTOP_FEATURES", False);
     XSetSelectionOwner(state->xdisplay, state->owner_atom,
                        state->command_window, CurrentTime);
     if (XGetSelectionOwner(state->xdisplay, state->owner_atom) !=
@@ -440,13 +471,9 @@ static void application_activate(GtkApplication *application, gpointer data)
     state->x_source = g_unix_fd_add(
         ConnectionNumber(state->xdisplay),
         G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL, x_events_ready, state);
-    if (state->window_manager > 0) {
-        state->wm_source = g_child_watch_add(
-            state->window_manager, window_manager_exited, state);
-    }
 }
 
-int gtk_shell_run(int argc, char **argv, pid_t window_manager)
+int gtk_shell_run(int argc, char **argv)
 {
     gdk_set_allowed_backends("x11");
     ShellState *state = calloc(1, sizeof(*state));
@@ -455,10 +482,6 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
         return 1;
     }
     state->top_panel = 1;
-    state->taskbar = 1;
-    state->window_manager = window_manager;
-    state->wm_started = window_manager > 0 ? time(NULL) : 0;
-    state->wm_restart_window = state->wm_started;
     state->xdisplay = XOpenDisplay(NULL);
     if (state->xdisplay == NULL) {
         fprintf(stderr, "Could not connect to the X11 display.\n");
@@ -481,12 +504,6 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
 
     if (state->x_source != 0) {
         g_source_remove(state->x_source);
-    }
-    if (state->wm_source != 0) {
-        g_source_remove(state->wm_source);
-    }
-    if (state->wm_restart_source != 0) {
-        g_source_remove(state->wm_restart_source);
     }
     if (state->status_source != 0) {
         g_source_remove(state->status_source);
@@ -517,8 +534,7 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
     icon_themes_destroy(state);
     g_clear_object(&application);
     XCloseDisplay(state->xdisplay);
-    result = state->window_manager_failed || state->command_selection_failed
-        ? 1 : result;
+    result = state->command_selection_failed ? 1 : result;
     free(state);
     (void)argc;
     return result;

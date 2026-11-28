@@ -87,6 +87,7 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	xserver-xorg-core xserver-xorg-video-fbdev xserver-xorg-input-evdev
 	xinit x11-xserver-utils x11-utils dbus dbus-x11
 	libgtk-4-dev libx11-dev libxft-dev libxtst-dev pkg-config build-essential
+	matchbox-window-manager \
 	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
 	ntpsec-ntpdate fake-hwclock e2fsprogs ca-certificates nano"
@@ -143,8 +144,6 @@ chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
 	/usr/bin/zirarch-x11-refresh /usr/src/zirarch/zirarch-x11-refresh.c
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/simple-desktop" \
 	"$ROOT_DIR/usr/bin/simple-desktop"
-install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/simple-wm" \
-	"$ROOT_DIR/usr/bin/simple-wm"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-packages" \
 	"$ROOT_DIR/usr/bin/fieldm-packages"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-keys" \

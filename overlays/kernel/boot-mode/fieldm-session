@@ -95,6 +95,8 @@ XTerm*saveLines: 2000
 XRESOURCES
 rc-service zirarch-x11-refresh start
 xrandr --output default --mode 720x1280 2>/dev/null || true
+matchbox-window-manager -use_titlebar no -use_cursor no &
+/usr/bin/fieldm-keyboard warm
 exec dbus-run-session -- /usr/bin/fieldm-desktop-launch
 EOF
 chmod 700 /root/.xinitrc

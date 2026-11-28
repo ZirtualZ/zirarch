@@ -24,9 +24,8 @@ make -C "$ROOT/kernel" \
 make -C "$ROOT/FieldM" clean
 make -C "$ROOT/FieldM" -j"$JOBS"
 make -C "$ROOT/FieldM" check-applications
-make -C "$ROOT/FieldM" check-wm
 
 "$ROOT/kernel/build-on5-fbconsole.sh"
 
 echo "Kernel: $ROOT/kernel/arch/arm/boot/zImage"
-echo "FieldM: $ROOT/FieldM/simple-desktop, simple-wm, fieldm-packages, fieldm-keys, and fieldm-kbd"
+echo "FieldM: $ROOT/FieldM/simple-desktop, fieldm-packages, fieldm-keys, and fieldm-kbd"

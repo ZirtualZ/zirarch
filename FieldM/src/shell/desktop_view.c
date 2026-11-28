@@ -509,22 +509,33 @@ static gboolean recents_refresh_after_close(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
+static gboolean recents_kill_after_timeout(gpointer data)
+{
+    Window client = (Window)GPOINTER_TO_UINT(data);
+    GdkDisplay *gdk_display = gdk_display_get_default();
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    Display *display = gdk_x11_display_get_xdisplay(
+        GDK_X11_DISPLAY(gdk_display));
+    G_GNUC_END_IGNORE_DEPRECATIONS
+    XWindowAttributes attributes;
+    if (XGetWindowAttributes(display, client, &attributes) &&
+        attributes.map_state != IsUnmapped) {
+        XKillClient(display, client);
+        XFlush(display);
+    }
+    return G_SOURCE_REMOVE;
+}
+
 static int recents_request_close(ShellState *state, Window frame)
 {
     GdkDisplay *gdk_display = gdk_display_get_default();
     G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     Display *display = gdk_x11_display_get_xdisplay(GDK_X11_DISPLAY(gdk_display));
     G_GNUC_END_IGNORE_DEPRECATIONS
-    Window root_return, parent_return, *children = NULL;
-    unsigned int count = 0;
-    if (!XQueryTree(display, frame, &root_return, &parent_return,
-                    &children, &count) ||
-        count == 0) {
-        if (children != NULL) XFree(children);
+    if (frame == None) {
         return 0;
     }
-    Window client = children[0];
-    XFree(children);
+    Window client = frame;
     XEvent event;
     memset(&event, 0, sizeof(event));
     event.type = ClientMessage;
@@ -537,6 +548,8 @@ static int recents_request_close(ShellState *state, Window frame)
     XSendEvent(display, DefaultRootWindow(display), False,
                SubstructureRedirectMask | SubstructureNotifyMask, &event);
     XFlush(display);
+    g_timeout_add(3000, recents_kill_after_timeout,
+                  GUINT_TO_POINTER((guint)client));
     (void)state;
     return 1;
 }
@@ -559,26 +572,20 @@ static void recents_switch(GtkListBox *list, GtkListBoxRow *row, gpointer data)
     Window frame = (Window)GPOINTER_TO_UINT(
         g_object_get_data(G_OBJECT(row), "x-window"));
     if (frame != None) {
-        Window root_return, parent_return, *children = NULL;
-        unsigned int count = 0;
-        if (XQueryTree(state->xdisplay, frame, &root_return, &parent_return,
-                       &children, &count) && count > 0) {
-            XEvent message;
-            memset(&message, 0, sizeof(message));
-            message.xclient.type = ClientMessage;
-            message.xclient.window = children[0];
-            message.xclient.message_type =
-                XInternAtom(state->xdisplay, "_NET_ACTIVE_WINDOW", False);
-            message.xclient.format = 32;
-            message.xclient.data.l[0] = 1;
-            message.xclient.data.l[1] = CurrentTime;
-            XSendEvent(state->xdisplay,
-                       DefaultRootWindow(state->xdisplay), False,
-                       SubstructureRedirectMask | SubstructureNotifyMask,
-                       (XEvent *)&message);
-            XFlush(state->xdisplay);
-        }
-        if (children != NULL) XFree(children);
+        XEvent message;
+        memset(&message, 0, sizeof(message));
+        message.xclient.type = ClientMessage;
+        message.xclient.window = frame;
+        message.xclient.message_type =
+            XInternAtom(state->xdisplay, "_NET_ACTIVE_WINDOW", False);
+        message.xclient.format = 32;
+        message.xclient.data.l[0] = 1;
+        message.xclient.data.l[1] = CurrentTime;
+        XSendEvent(state->xdisplay,
+                   DefaultRootWindow(state->xdisplay), False,
+                   SubstructureRedirectMask | SubstructureNotifyMask,
+                   (XEvent *)&message);
+        XFlush(state->xdisplay);
         XFlush(state->xdisplay);
     }
     recents_close(state);
@@ -733,28 +740,34 @@ void recents_open(ShellState *state)
     while ((child = gtk_widget_get_first_child(list)) != NULL) {
         gtk_list_box_remove(GTK_LIST_BOX(list), child);
     }
-    Window root_return, parent_return, *children = NULL;
-    unsigned int count = 0;
-    XQueryTree(state->xdisplay, DefaultRootWindow(state->xdisplay),
-               &root_return, &parent_return, &children, &count);
-    for (unsigned int i = 0; i < count; ++i) {
-        Window frame = children[i];
+    Atom client_list_atom =
+        XInternAtom(state->xdisplay, "_NET_CLIENT_LIST", False);
+    Atom actual_type;
+    int actual_format;
+    unsigned long count = 0;
+    unsigned long bytes_after = 0;
+    unsigned char *value = NULL;
+    if (XGetWindowProperty(state->xdisplay,
+                           DefaultRootWindow(state->xdisplay),
+                           client_list_atom, 0, 1024, False, XA_WINDOW,
+                           &actual_type, &actual_format, &count, &bytes_after,
+                           &value) != Success || value == NULL ||
+        actual_type != XA_WINDOW || actual_format != 32) {
+        if (value != NULL) XFree(value);
+        gtk_widget_set_visible(state->recents, TRUE);
+        gtk_window_present(GTK_WINDOW(state->recents));
+        g_timeout_add(100, recents_activate, state);
+        return;
+    }
+    Window *clients = (Window *)value;
+    for (unsigned long i = 0; i < count; ++i) {
+        Window client = clients[i];
         XWindowAttributes attrs;
-        if (!XGetWindowAttributes(state->xdisplay, frame, &attrs) ||
+        if (!XGetWindowAttributes(state->xdisplay, client, &attrs) ||
             attrs.map_state == IsUnmapped) continue;
-        Window child_root, child_parent, *app_children = NULL;
-        unsigned int app_count = 0;
-        if (!XQueryTree(state->xdisplay, frame, &child_root, &child_parent,
-                        &app_children, &app_count) || app_count == 0) {
-            if (app_children != NULL) XFree(app_children);
-            continue;
-        }
-        Window client = app_children[0];
-        XWindowAttributes client_attrs;
         XClassHint class_hint = {0};
         int have_class = XGetClassHint(state->xdisplay, client, &class_hint);
-        if (!XGetWindowAttributes(state->xdisplay, client, &client_attrs) ||
-            client_attrs.override_redirect ||
+        if (attrs.override_redirect ||
             recents_has_window_type(state->xdisplay, client,
                                     "_NET_WM_WINDOW_TYPE_DOCK") ||
             recents_has_window_type(state->xdisplay, client,
@@ -764,7 +777,6 @@ void recents_open(ShellState *state)
                 if (class_hint.res_name != NULL) XFree(class_hint.res_name);
                 if (class_hint.res_class != NULL) XFree(class_hint.res_class);
             }
-            XFree(app_children);
             continue;
         }
         char *name = NULL;
@@ -774,16 +786,6 @@ void recents_open(ShellState *state)
             if (name[0] == '\0') {
                 XFree(name);
                 name = NULL;
-            }
-        }
-        if (name == NULL) {
-            XFetchName(state->xdisplay, frame, &name);
-            if (name != NULL) {
-                g_strstrip(name);
-                if (name[0] == '\0') {
-                    XFree(name);
-                    name = NULL;
-                }
             }
         }
         if (name == NULL && have_class) {
@@ -798,7 +800,6 @@ void recents_open(ShellState *state)
             if (class_hint.res_name != NULL) XFree(class_hint.res_name);
             if (class_hint.res_class != NULL) XFree(class_hint.res_class);
         }
-        if (app_children != NULL) XFree(app_children);
         if (name == NULL || name[0] == '\0' ||
             strstr(name, "ZIRARCH") != NULL ||
             strstr(name, "FieldM") != NULL) {
@@ -815,16 +816,16 @@ void recents_open(ShellState *state)
         g_signal_connect(close, "clicked",
                          G_CALLBACK(recents_close_one), state);
         g_object_set_data(G_OBJECT(close), "x-window",
-                          GUINT_TO_POINTER((guint)frame));
+                          GUINT_TO_POINTER((guint)client));
         gtk_box_append(GTK_BOX(box), label);
         gtk_box_append(GTK_BOX(box), close);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
         g_object_set_data(G_OBJECT(row), "x-window",
-                          GUINT_TO_POINTER((guint)frame));
+                          GUINT_TO_POINTER((guint)client));
         gtk_list_box_append(GTK_LIST_BOX(list), row);
         XFree(name);
     }
-    if (children != NULL) XFree(children);
+    XFree(clients);
     gtk_widget_set_visible(state->recents, TRUE);
     gtk_window_present(GTK_WINDOW(state->recents));
     g_timeout_add(100, recents_activate, state);
@@ -1075,20 +1076,6 @@ static int set_desktop_window_type(ShellState *state, GtkWidget *window)
                     XInternAtom(state->xdisplay, "_NET_WM_STATE", False),
                     XA_ATOM, 32, PropModeReplace,
                     (unsigned char *)&skip_taskbar, 1);
-    unsigned long strut[4] = {0, 0, 48, 0};
-    XChangeProperty(state->xdisplay, xid,
-                    XInternAtom(state->xdisplay, "_NET_WM_STRUT", False),
-                    XA_CARDINAL, 32, PropModeReplace,
-                    (unsigned char *)strut, 4);
-    unsigned long partial[12] = {0, 0, 48, 0,
-                                 0, 0, 0, 0,
-                                 state->screen.x,
-                                 state->screen.x + state->screen.width - 1,
-                                 0, 0};
-    XChangeProperty(state->xdisplay, xid,
-                    XInternAtom(state->xdisplay, "_NET_WM_STRUT_PARTIAL", False),
-                    XA_CARDINAL, 32, PropModeReplace,
-                    (unsigned char *)partial, 12);
     XSync(state->xdisplay, False);
     return 1;
 }

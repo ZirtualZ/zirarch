@@ -25,6 +25,4 @@ rm -f /run/fieldm-keyboard/manual \
 rm -f /run/fieldm-keyboard/hide-sequence
 /usr/bin/fieldm-keyboard warm
 
-started=$(date +%s 2>/dev/null || echo 0)
-log "started simple-desktop"
 exec simple-desktop --x-session

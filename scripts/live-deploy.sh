@@ -118,22 +118,22 @@ rollback()
 		rc-service zirarch-boot-mode stop >/dev/null 2>&1 || true
 		rc-service fieldm-keys stop >/dev/null 2>&1 || true
 		pkill -TERM -x simple-desktop 2>/dev/null || true
-		pkill -TERM -x simple-wm 2>/dev/null || true
+		pkill -TERM -x matchbox-window-manager 2>/dev/null || true
 		pkill -TERM -x fieldm-kbd 2>/dev/null || true
 		pkill -TERM -x Xorg 2>/dev/null || true
 		sleep 2
 		pkill -KILL -x simple-desktop 2>/dev/null || true
-		pkill -KILL -x simple-wm 2>/dev/null || true
+		pkill -KILL -x matchbox-window-manager 2>/dev/null || true
 		pkill -KILL -x fieldm-kbd 2>/dev/null || true
 		pkill -KILL -x Xorg 2>/dev/null || true
 		if test -f \$dir/simple-desktop; then cp -p \$dir/simple-desktop /usr/bin/simple-desktop.rollback-new; mv -f /usr/bin/simple-desktop.rollback-new /usr/bin/simple-desktop; fi
-		if test -f \$dir/simple-wm; then cp -p \$dir/simple-wm /usr/bin/simple-wm.rollback-new; mv -f /usr/bin/simple-wm.rollback-new /usr/bin/simple-wm; fi
 		if test -f \$dir/fieldm-packages; then cp -p \$dir/fieldm-packages /usr/bin/fieldm-packages.rollback-new; mv -f /usr/bin/fieldm-packages.rollback-new /usr/bin/fieldm-packages; fi
 		if test -f \$dir/fieldm-keys; then cp -p \$dir/fieldm-keys /usr/bin/fieldm-keys.rollback-new; mv -f /usr/bin/fieldm-keys.rollback-new /usr/bin/fieldm-keys; fi
 		if test -f \$dir/fieldm-kbd; then cp -p \$dir/fieldm-kbd /usr/bin/fieldm-kbd.rollback-new; mv -f /usr/bin/fieldm-kbd.rollback-new /usr/bin/fieldm-kbd; fi
 		if test -f \$dir/fieldm-session; then cp -p \$dir/fieldm-session /usr/bin/fieldm-session.rollback-new; mv -f /usr/bin/fieldm-session.rollback-new /usr/bin/fieldm-session; fi
 		if test -f \$dir/fieldm-desktop-launch; then cp -p \$dir/fieldm-desktop-launch /usr/bin/fieldm-desktop-launch.rollback-new; mv -f /usr/bin/fieldm-desktop-launch.rollback-new /usr/bin/fieldm-desktop-launch; fi
 		if test -f \$dir/fieldm-keyboard; then cp -p \$dir/fieldm-keyboard /usr/bin/fieldm-keyboard.rollback-new; mv -f /usr/bin/fieldm-keyboard.rollback-new /usr/bin/fieldm-keyboard; fi
+		if test -f \$dir/fieldm-terminal; then cp -p \$dir/fieldm-terminal /usr/bin/fieldm-terminal.rollback-new; mv -f /usr/bin/fieldm-terminal.rollback-new /usr/bin/fieldm-terminal; fi
 		if test -f \$dir/zirarch-boot-mode; then cp -p \$dir/zirarch-boot-mode /usr/bin/zirarch-boot-mode.rollback-new; mv -f /usr/bin/zirarch-boot-mode.rollback-new /usr/bin/zirarch-boot-mode; fi
 		if test -f \$dir/zirarch-boot-mode.initd; then cp -p \$dir/zirarch-boot-mode.initd /etc/init.d/zirarch-boot-mode.rollback-new; mv -f /etc/init.d/zirarch-boot-mode.rollback-new /etc/init.d/zirarch-boot-mode; fi
 		if test -f \$dir/fieldm-keys.initd; then cp -p \$dir/fieldm-keys.initd /etc/init.d/fieldm-keys.rollback-new; mv -f /etc/init.d/fieldm-keys.rollback-new /etc/init.d/fieldm-keys; fi
@@ -169,13 +169,13 @@ ROLLBACK_MANIFEST=$LOG_ROOT/$DEPLOY_NAME.rollback.txt
 
 DEPLOY_FILES="
 simple-desktop|remote:$REMOTE_ROOT/build/FieldM/simple-desktop|/usr/bin/simple-desktop
-simple-wm|remote:$REMOTE_ROOT/build/FieldM/simple-wm|/usr/bin/simple-wm
 fieldm-packages|remote:$REMOTE_ROOT/build/FieldM/fieldm-packages|/usr/bin/fieldm-packages
 fieldm-keys|remote:$REMOTE_ROOT/build/FieldM/fieldm-keys|/usr/bin/fieldm-keys
 fieldm-kbd|remote:$REMOTE_ROOT/build/FieldM/fieldm-kbd|/usr/bin/fieldm-kbd
 fieldm-session|$ROOT/overlays/kernel/boot-mode/fieldm-session|/usr/bin/fieldm-session
 fieldm-desktop-launch|$ROOT/overlays/kernel/boot-mode/fieldm-desktop-launch|/usr/bin/fieldm-desktop-launch
 fieldm-keyboard|$ROOT/overlays/kernel/boot-mode/fieldm-keyboard|/usr/bin/fieldm-keyboard
+fieldm-terminal|$ROOT/overlays/kernel/boot-mode/fieldm-terminal|/usr/bin/fieldm-terminal
 zirarch-boot-mode|$ROOT/overlays/kernel/boot-mode/zirarch-boot-mode|/usr/bin/zirarch-boot-mode
 zirarch-boot-mode.initd|$ROOT/overlays/kernel/boot-mode/zirarch-boot-mode.initd|/etc/init.d/zirarch-boot-mode
 fieldm-keys.initd|$ROOT/overlays/kernel/boot-mode/fieldm-keys.initd|/etc/init.d/fieldm-keys
@@ -222,12 +222,11 @@ ssh_run sh -c "set -e
 	rc-service zirarch-boot-mode stop >/dev/null 2>&1 || true
 	rc-service fieldm-keys stop >/dev/null 2>&1 || true
 	pkill -TERM -x simple-desktop 2>/dev/null || true
-	pkill -TERM -x simple-wm 2>/dev/null || true
+	pkill -TERM -x matchbox-window-manager 2>/dev/null || true
 	pkill -TERM -x fieldm-kbd 2>/dev/null || true
 	pkill -TERM -x Xorg 2>/dev/null || true
 	sleep 2
 	pkill -KILL -x simple-desktop 2>/dev/null || true
-	pkill -KILL -x simple-wm 2>/dev/null || true
 	pkill -KILL -x fieldm-kbd 2>/dev/null || true
 	pkill -KILL -x Xorg 2>/dev/null || true
 " >/dev/null

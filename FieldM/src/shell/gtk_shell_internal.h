@@ -40,7 +40,6 @@ typedef struct {
     Window command_window;
     Atom command_atom;
     Atom owner_atom;
-    Atom feature_atom;
     Atom desktop_type_atom;
     Application applications[SHELL_MAX_APPLICATIONS];
     size_t application_count;
@@ -71,15 +70,7 @@ typedef struct {
     GtkCssProvider *styles;
     int command_selection_failed;
     int top_panel;
-    int taskbar;
-    pid_t window_manager;
-    int window_manager_failed;
-    int wm_restart_count;
-    time_t wm_restart_window;
-    time_t wm_started;
-    guint wm_restart_source;
     guint x_source;
-    guint wm_source;
     guint status_source;
     guint reap_source;
     GtkWidget *status_network;

@@ -22,12 +22,9 @@
 #include <unistd.h>
 
 enum {
-    CMD_BACK = 2,
     CMD_HOME = 3,
     CMD_RECENTS = 4,
     CMD_POWER = 6,
-    CMD_CLOSE_FOCUSED = 7,
-    CMD_APP_BACK = 8,
     MAX_INPUT_DEVICES = 64,
     RESTART_HOLD_MS = 5000,
     POWER_TAP_MS = 1000
@@ -317,6 +314,39 @@ static void send_command_in_child(long command)
     _exit(0);
 }
 
+static void send_escape_in_child(void)
+{
+    pid_t child = fork();
+    if (child != 0) {
+        return;
+    }
+    Display *display = open_x_display();
+    if (display != NULL) {
+        Window focus = None;
+        int revert = 0;
+        XGetInputFocus(display, &focus, &revert);
+        if (focus == None || focus == PointerRoot) {
+            focus = DefaultRootWindow(display);
+        }
+        XKeyEvent event;
+        memset(&event, 0, sizeof(event));
+        event.display = display;
+        event.window = focus;
+        event.root = DefaultRootWindow(display);
+        event.subwindow = None;
+        event.time = CurrentTime;
+        event.same_screen = True;
+        event.keycode = XKeysymToKeycode(display, XK_Escape);
+        event.type = KeyPress;
+        XSendEvent(display, focus, True, KeyPressMask, (XEvent *)&event);
+        event.type = KeyRelease;
+        XSendEvent(display, focus, True, KeyReleaseMask, (XEvent *)&event);
+        XFlush(display);
+        XCloseDisplay(display);
+    }
+    _exit(0);
+}
+
 
 static void set_volume(int direction)
 {
@@ -369,7 +399,7 @@ static int process_is_target(pid_t pid)
     }
     comm[strcspn(comm, "\r\n")] = '\0';
     if (strcmp(comm, "simple-desktop") == 0 ||
-        strcmp(comm, "simple-wm") == 0 ||
+        strcmp(comm, "matchbox-window-manager") == 0 ||
         strcmp(comm, "fieldm-kbd") == 0) {
         return 1;
     }
@@ -700,9 +730,9 @@ static void update_key_state(int device, unsigned int code, int value,
             reset_combo_if_released();
         }
     } else if (value == 1 && (code == KEY_BACK || code == KEY_ESC)) {
-        send_command_in_child(CMD_APP_BACK);
+        send_escape_in_child();
     } else if (value == 1 && code == KEY_HOME) {
-        send_command_in_child(CMD_CLOSE_FOCUSED);
+        send_command_in_child(CMD_HOME);
     } else if (value == 1 && code == KEY_MENU) {
         send_command_in_child(CMD_RECENTS);
     } else if (value == 1 && code == KEY_VOLUMEDOWN) {

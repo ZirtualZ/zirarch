@@ -3,6 +3,6 @@
 
 #include <sys/types.h>
 
-int gtk_shell_run(int argc, char **argv, pid_t window_manager);
+int gtk_shell_run(int argc, char **argv);
 
 #endif

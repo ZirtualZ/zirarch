@@ -17,13 +17,6 @@ if [ "$size" -gt 1048576 ]; then
 	touch "$logfile"
 fi
 
-restart_count_file="$state_dir/restart-count"
-restart_window_file="$state_dir/restart-window"
-restart_count=$(cat "$restart_count_file" 2>/dev/null || echo 0)
-restart_window=$(cat "$restart_window_file" 2>/dev/null || echo 0)
-case "$restart_count" in ''|*[!0-9]*) restart_count=0 ;; esac
-case "$restart_window" in ''|*[!0-9]*) restart_window=0 ;; esac
-
 keyboard_pid()
 {
 	[ -s "$pidfile" ] || return 1
@@ -58,16 +51,6 @@ sync_terminal_state()
 
 start_keyboard()
 {
-	now=$(date +%s 2>/dev/null || echo 0)
-	if [ $((now - restart_window)) -ge 300 ]; then
-		restart_count=0
-		restart_window=$now
-	fi
-	if [ "$restart_count" -ge 5 ]; then
-		printf 'keyboard-recovery\n' > "$state_dir/state"
-		echo "fieldm-keyboard: restart limit reached" >&2
-		return 1
-	fi
 	rm -f "$pidfile"
 	if command -v fieldm-kbd >/dev/null 2>&1; then
 		fieldm-kbd &
@@ -80,9 +63,6 @@ start_keyboard()
 		return 1
 	fi
 	echo "$!" > "$pidfile"
-	restart_count=$((restart_count + 1))
-	printf '%s\n' "$restart_count" > "$restart_count_file"
-	printf '%s\n' "$restart_window" > "$restart_window_file"
 	printf 'keyboard-running\n' > "$state_dir/state"
 }
 

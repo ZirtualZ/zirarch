@@ -11,9 +11,9 @@ BINDIR ?= $(PREFIX)/bin
 XSESSIONDIR ?= /usr/share/xsessions
 DESTDIR ?=
 
-.PHONY: all clean install check-gtk check-applications check-wm
+.PHONY: all clean install check-gtk check-applications
 
-all: simple-desktop simple-wm fieldm-packages fieldm-keys fieldm-kbd
+all: simple-desktop fieldm-packages fieldm-keys fieldm-kbd
 
 DESKTOP_SOURCES = src/desktop.c src/applications.c \
 	src/appearance.c src/screen_layout.c src/shell/session.c \
@@ -40,16 +40,9 @@ check-gtk:
 check-applications:
 	sh ./tests/check-applications.sh
 
-check-wm:
-	sh ./tests/check-wm.sh
-
 simple-desktop: $(DESKTOP_SOURCES) $(DESKTOP_HEADERS) | check-gtk
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ $(DESKTOP_SOURCES) \
 		$(LDLIBS) $(GTK_LIBS)
-
-simple-wm: src/wm.c src/screen_layout.c src/screen_layout.h
-	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ \
-		src/wm.c src/screen_layout.c $(LDLIBS) $(XFT_LIBS)
 
 fieldm-packages: src/packages.c
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ src/packages.c \
@@ -64,7 +57,6 @@ fieldm-kbd: src/fieldm-kbd.c src/theme.h
 
 install: all
 	install -Dm755 simple-desktop "$(DESTDIR)$(BINDIR)/simple-desktop"
-	install -Dm755 simple-wm "$(DESTDIR)$(BINDIR)/simple-wm"
 	install -Dm755 fieldm-packages "$(DESTDIR)$(BINDIR)/fieldm-packages"
 	install -Dm755 fieldm-keys "$(DESTDIR)$(BINDIR)/fieldm-keys"
 	install -Dm755 fieldm-kbd "$(DESTDIR)$(BINDIR)/fieldm-kbd"
@@ -75,4 +67,4 @@ install: all
 		"$(DESTDIR)/usr/share/applications/packages.desktop"
 
 clean:
-	rm -f simple-desktop simple-wm fieldm-packages fieldm-keys fieldm-kbd
+	rm -f simple-desktop fieldm-packages fieldm-keys fieldm-kbd
