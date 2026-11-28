@@ -23,7 +23,15 @@ rm -f /run/fieldm-keyboard/manual \
 	/run/fieldm-keyboard/entry \
 	/run/fieldm-keyboard/terminal
 rm -f /run/fieldm-keyboard/hide-sequence
-/usr/bin/fieldm-keyboard warm
+(
+	sleep 1
+	(
+		sleep 1
+		/usr/bin/fieldm-keyboard warm >/dev/null 2>&1 || true
+		/usr/bin/fieldm-imd >/tmp/fieldm-imd.log 2>&1 &
+	) & >/dev/null 2>&1 || true
+	/usr/bin/fieldm-imd >/tmp/fieldm-imd.log 2>&1 &
+) &
 
 uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null || printf unknown)
 printf '%s\n' "$uptime" > /run/zirarch-gui-started

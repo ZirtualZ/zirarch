@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Camera
+GenericName=Camera capture
+Exec=zirarch-camera
+Terminal=false
+Categories=Graphics;Video;

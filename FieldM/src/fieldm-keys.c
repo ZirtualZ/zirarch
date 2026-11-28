@@ -214,6 +214,12 @@ static void toggle_power(void)
         write_integer_file(fb_path, 1);
         screen_blanked = 1;
         set_touchscreen_grab(1);
+        pid_t suspend = fork();
+        if (suspend == 0) {
+            execl("/usr/bin/zirarch-suspend", "zirarch-suspend",
+                  "screen-off", (char *)NULL);
+            _exit(127);
+        }
         if (lock_active) {
             FILE *pid = fopen("/run/fieldm-lock.pid", "r");
             pid_t lock = 0;

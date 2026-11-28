@@ -1,0 +1,44 @@
+#!/bin/sh
+set -u
+
+enabled=/var/lib/zirarch/suspend-enabled
+
+case "${1:-status}" in
+	enable)
+		mkdir -p /var/lib/zirarch
+		: >"$enabled"
+		echo "suspend enabled"
+		;;
+	disable)
+		rm -f "$enabled"
+		echo "suspend disabled"
+		;;
+	status)
+		[ -e "$enabled" ] &&
+			echo enabled ||
+			echo disabled
+		;;
+	screen-off)
+		[ -e "$enabled" ] || exit 0
+		sleep 5
+		[ -e /run/fieldm-screen-blanked ] || exit 0
+		# Never suspend USB recovery or active media/download.
+		[ -d /sys/class/net/rndis0 ] &&
+			ip -o address show dev rndis0 2>/dev/null |
+				grep -q '192.168.7.2/24' && exit 0
+		pgrep -x mpv >/dev/null 2>&1 && exit 0
+		pgrep -x wget >/dev/null 2>&1 && exit 0
+		pgrep -x curl >/dev/null 2>&1 && exit 0
+		echo mem >/sys/power/state 2>/dev/null || exit 0
+		;;
+	wake)
+		mode=normal
+		[ -r /var/lib/zirarch/power-mode ] &&
+			mode=$(cat /var/lib/zirarch/power-mode)
+		[ -x /usr/bin/zirarch-power ] &&
+			/usr/bin/zirarch-power "$mode" >/dev/null 2>&1 || true
+		[ -x /usr/bin/wifi ] &&
+			nohup /usr/bin/wifi reconnect >/dev/null 2>&1 &
+		;;
+	*) echo "usage: zirarch-suspend enable|disable|status|screen-off|wake" >&2; exit 1 ;;
+esac

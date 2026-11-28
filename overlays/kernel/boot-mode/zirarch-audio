@@ -1,0 +1,20 @@
+#!/bin/sh
+set -u
+
+case "${1:-status}" in
+	status)
+		amixer -c 0 scontents 2>/dev/null | sed -n '1,160p'
+		;;
+	up)
+		amixer -c 0 set Master 5%+ >/dev/null 2>&1
+		;;
+	down)
+		amixer -c 0 set Master 5%- >/dev/null 2>&1
+		;;
+	jack)
+		for path in /sys/class/switch/*state /proc/asound/card*/codec#*; do
+			[ -r "$path" ] && cat "$path" 2>/dev/null
+		done
+		;;
+	*) echo "usage: zirarch-audio status|up|down|jack" >&2; exit 1 ;;
+esac

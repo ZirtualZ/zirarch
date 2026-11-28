@@ -586,6 +586,24 @@ static void storage_choose_sd(GtkButton *button, gpointer data)
     gtk_button_set_label(button, "microSD selected");
 }
 
+static void storage_backup_clicked(GtkButton *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+    char *arguments[] = {"/usr/bin/zirarch-backup", NULL};
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+}
+
+static void storage_restore_clicked(GtkButton *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+    char *arguments[] = {"/usr/bin/zirarch-restore", NULL};
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+}
+
 static GtkWidget *storage_page(void)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -657,6 +675,16 @@ static GtkWidget *storage_page(void)
         gtk_box_append(GTK_BOX(choices), microsd);
         gtk_box_append(GTK_BOX(page), choices);
     }
+    GtkWidget *backup = gtk_button_new_with_label("Back up /data");
+    GtkWidget *restore = gtk_button_new_with_label("Restore latest backup");
+    gtk_widget_set_size_request(backup, -1, 64);
+    gtk_widget_set_size_request(restore, -1, 64);
+    g_signal_connect(backup, "clicked",
+                     G_CALLBACK(storage_backup_clicked), NULL);
+    g_signal_connect(restore, "clicked",
+                     G_CALLBACK(storage_restore_clicked), NULL);
+    gtk_box_append(GTK_BOX(page), backup);
+    gtk_box_append(GTK_BOX(page), restore);
     return page;
 }
 
@@ -831,6 +859,18 @@ static void battery_power_mode_clicked(GtkButton *button, gpointer data)
                   g_object_get_data(G_OBJECT(button), "battery-table"));
 }
 
+static void battery_suspend_toggled(GtkCheckButton *button, gpointer data)
+{
+    (void)data;
+    char *arguments[] = {
+        "/usr/bin/zirarch-suspend",
+        gtk_check_button_get_active(button) ? "enable" : "disable",
+        NULL
+    };
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+}
+
 static GtkWidget *battery_page(void)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -961,6 +1001,15 @@ static GtkWidget *battery_page(void)
     g_object_set_data(G_OBJECT(medium), "battery-table", table_label);
     g_object_set_data(G_OBJECT(extreme), "battery-table", table_label);
     gtk_box_append(GTK_BOX(page), table_label);
+    GtkWidget *suspend = gtk_check_button_new_with_label(
+        "Real suspend after screen-off");
+    FILE *suspend_file = fopen("/var/lib/zirarch/suspend-enabled", "r");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(suspend),
+                                suspend_file != NULL);
+    if (suspend_file != NULL) fclose(suspend_file);
+    g_signal_connect(suspend, "toggled",
+                     G_CALLBACK(battery_suspend_toggled), NULL);
+    gtk_box_append(GTK_BOX(page), suspend);
     return page;
 }
 
@@ -1289,6 +1338,15 @@ static void post_report_clicked(GtkButton *button, gpointer data)
     g_free(report);
 }
 
+static void update_clicked(GtkButton *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+    char *arguments[] = {"/usr/bin/zirarch-update", NULL};
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+}
+
 static GtkWidget *about_page(void)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -1373,6 +1431,11 @@ static GtkWidget *about_page(void)
     gtk_box_append(GTK_BOX(page), post_every);
     gtk_box_append(GTK_BOX(page), post_now);
     gtk_box_append(GTK_BOX(page), post_report);
+    GtkWidget *update = gtk_button_new_with_label(
+        "Check for updates");
+    g_signal_connect(update, "clicked",
+                     G_CALLBACK(update_clicked), NULL);
+    gtk_box_append(GTK_BOX(page), update);
     return page;
 }
 

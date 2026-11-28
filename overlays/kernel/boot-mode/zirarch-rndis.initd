@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+
+description="Zirarch RNDIS recovery network"
+
+depend()
+{
+	before zirarch-sshd
+}
+
+start()
+{
+	gadget=/sys/class/android_usb/android0
+	[ -d "$gadget" ] || return 1
+	echo 0 > "$gadget/enable" 2>/dev/null || true
+	echo 04e8 > "$gadget/idVendor" 2>/dev/null || true
+	echo 6863 > "$gadget/idProduct" 2>/dev/null || true
+	echo Samsung > "$gadget/f_rndis/manufacturer" 2>/dev/null || true
+	echo 04e8 > "$gadget/f_rndis/vendorID" 2>/dev/null || true
+	echo 1 > "$gadget/f_rndis/wceis" 2>/dev/null || true
+	echo rndis > "$gadget/functions" 2>/dev/null || true
+	echo 224 > "$gadget/bDeviceClass" 2>/dev/null || true
+	echo 1 > "$gadget/enable" 2>/dev/null || true
+	remaining=20
+	while [ ! -d /sys/class/net/rndis0 ] && [ "$remaining" -gt 0 ]; do
+		sleep 0.05
+		remaining=$((remaining - 1))
+	done
+	[ -d /sys/class/net/rndis0 ] || return 1
+	ip link set rndis0 up
+	ip addr show dev rndis0 | grep -q '192.168.7.2/24' ||
+		ip addr add 192.168.7.2/24 dev rndis0
+	eend 0
+}

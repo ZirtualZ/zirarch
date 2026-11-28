@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+
+description="Set the next RTC alarm"
+
+depend()
+{
+	after zirarch-boot-mode
+}
+
+start()
+{
+	/usr/bin/zirarch-alarm next >/dev/null 2>&1 || true
+	eend 0
+}

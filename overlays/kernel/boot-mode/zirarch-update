@@ -1,0 +1,29 @@
+#!/bin/sh
+set -u
+
+free_kb=$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4}')
+case "$free_kb" in ''|*[!0-9]*) free_kb=0 ;; esac
+[ "$free_kb" -ge 307200 ] || {
+	echo "refusing update: less than 300 MB free"
+	exit 2
+}
+
+for repo in /root/zirarch /mnt/zirarch/zirarch; do
+	[ -d "$repo/.git" ] || continue
+	git -C "$repo" pull --ff-only origin main ||
+		exit 1
+	make -C "$repo/FieldM" -j2 ||
+		exit 1
+	install -m 755 "$repo/FieldM/simple-desktop" /usr/bin/simple-desktop
+	install -m 755 "$repo/FieldM/fieldm-packages" /usr/bin/fieldm-packages
+	install -m 755 "$repo/FieldM/fieldm-keys" /usr/bin/fieldm-keys
+	install -m 755 "$repo/FieldM/fieldm-kbd" /usr/bin/fieldm-kbd
+	if [ -f "$repo/FieldM/fieldm-clock" ]; then
+		install -m 755 "$repo/FieldM/fieldm-clock" /usr/bin/fieldm-clock
+	fi
+	rc-service fieldm-keys restart >/dev/null 2>&1 || true
+	echo "update complete"
+	exit 0
+done
+echo "no Zirarch source checkout found"
+exit 1

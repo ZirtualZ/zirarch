@@ -4,7 +4,7 @@ description="Synchronize the clock in the background after boot"
 
 depend()
 {
-	after networking usb-rndis
+	after zirarch-boot-mode
 }
 
 start()

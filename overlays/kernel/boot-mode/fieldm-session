@@ -70,14 +70,10 @@ XTerm*faceSize: 11
 XTerm*scrollBar: false
 XTerm*saveLines: 2000
 XRESOURCES
-rc-service zirarch-x11-refresh start
-xrandr --output default --mode 720x1280 2>/dev/null || true
 matchbox-window-manager -use_titlebar no -use_cursor no &
-/usr/bin/fieldm-keyboard warm
 exec dbus-run-session -- sh -c '
 	/usr/libexec/at-spi-bus-launcher --launch-immediately >/tmp/at-spi-bus.log 2>&1 &
 	/usr/libexec/at-spi2-registryd >/tmp/at-spi-registry.log 2>&1 &
-	/usr/bin/fieldm-imd >/tmp/fieldm-imd.log 2>&1 &
 	exec /usr/bin/fieldm-desktop-launch
 '
 EOF

@@ -7,5 +7,5 @@ pidfile="/run/zirarch-battery.pid"
 
 depend()
 {
-	after localmount fieldm-logs
+	after zirarch-boot-mode fieldm-logs
 }

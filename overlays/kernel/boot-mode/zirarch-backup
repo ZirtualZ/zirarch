@@ -1,0 +1,17 @@
+#!/bin/sh
+set -u
+
+destination=${1:-}
+stamp=$(date +%Y%m%d-%H%M%S)
+mkdir -p /data/backups
+if [ -n "$destination" ]; then
+	mkdir -p "$destination" || exit 1
+	out="$destination/zirarch-backup-$stamp.tar.gz"
+else
+	out="/data/backups/zirarch-backup-$stamp.tar.gz"
+fi
+
+mkdir -p /tmp/zirarch-backup-root
+tar -C /root -cf - . 2>/dev/null |
+	gzip -1 >"$out"
+echo "$out"

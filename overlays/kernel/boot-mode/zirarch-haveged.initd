@@ -8,9 +8,7 @@ pidfile="/run/zirarch-haveged.pid"
 
 depend()
 {
-	need zirarch-early-boot
-	after zirarch-early-boot
-	before dbus elogind zramswap zirarch-sshd urandom
+	after zirarch-boot-mode
 }
 
 start_post()

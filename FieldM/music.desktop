@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Music
+GenericName=Music player
+Exec=zirarch-music list
+Terminal=false
+Categories=AudioVideo;Audio;

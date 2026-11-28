@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+description="Zirarch suspend settings service"
+
+depend()
+{
+	after zirarch-boot-mode fieldm-keys
+}
+
+start()
+{
+	eend 0
+}

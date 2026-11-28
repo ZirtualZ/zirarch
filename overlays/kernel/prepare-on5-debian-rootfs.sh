@@ -97,7 +97,7 @@ PACKAGES="sysvinit-core openrc elogind openssh-server ifupdown
 	at-spi2-core python3-pyatspi libatk-adaptor \
 	gsettings-desktop-schemas gir1.2-atspi-2.0 \
 	xterm kbd console-data zram-tools
-	ntpsec-ntpdate fake-hwclock util-linux-extra pcmanfm xclip scrot \
+	ntpsec-ntpdate fake-hwclock util-linux-extra pcmanfm xclip scrot mpv alsa-utils ffmpeg v4l-utils \
 	haveged e2fsprogs ca-certificates nano"
 
 chroot "$ROOT_DIR" /usr/bin/env \
@@ -164,6 +164,30 @@ install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-browser" \
 	"$ROOT_DIR/usr/bin/fieldm-browser"
 install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-lock" \
 	"$ROOT_DIR/usr/bin/fieldm-lock"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-clock" \
+	"$ROOT_DIR/usr/bin/fieldm-clock"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-suspend" \
+	"$ROOT_DIR/usr/bin/zirarch-suspend"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-alarm" \
+	"$ROOT_DIR/usr/bin/zirarch-alarm"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-alarm.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-alarm"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-update" \
+	"$ROOT_DIR/usr/bin/zirarch-update"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-backup" \
+	"$ROOT_DIR/usr/bin/zirarch-backup"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-restore" \
+	"$ROOT_DIR/usr/bin/zirarch-restore"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-audio" \
+	"$ROOT_DIR/usr/bin/zirarch-audio"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-music" \
+	"$ROOT_DIR/usr/bin/zirarch-music"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-camera" \
+	"$ROOT_DIR/usr/bin/zirarch-camera"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-suspend.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-suspend"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-alarm.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-alarm"
 install -m 644 "$PROJECT_DIR/FieldM/data/fieldm.css" \
 	"$ROOT_DIR/usr/share/fieldm/fieldm.css"
 
@@ -172,6 +196,10 @@ install -m 755 "$KERNEL_DIR/fbconsole/screen-console.initd" \
 	"$ROOT_DIR/etc/init.d/screen-console"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-boot-mode"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-rndis.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-rndis"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-rndis.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-rndis"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode" \
 	"$ROOT_DIR/usr/bin/zirarch-boot-mode"
 cp -a "$KERNEL_DIR/boot-mode/zirarch-volume-down.c" \
@@ -209,6 +237,12 @@ install -m 755 "$KERNEL_DIR/boot-mode/zirarch-battery.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-battery"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-power.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-power"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-suspend" \
+	"$ROOT_DIR/usr/bin/zirarch-suspend"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-suspend.initd" \
+	"$ROOT_DIR/etc/init.d/zirarch-suspend"
+install -m 755 "$KERNEL_DIR/boot-mode/zirarch-alarm" \
+	"$ROOT_DIR/usr/bin/zirarch-alarm"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-early-boot.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-early-boot"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-haveged.initd" \
@@ -228,8 +262,14 @@ install -m 644 "$KERNEL_DIR/boot-mode/zirarch-browser.desktop" \
 	"$ROOT_DIR/usr/share/applications/zirarch-browser.desktop"
 install -m 644 "$PROJECT_DIR/FieldM/data/packages.desktop" \
 	"$ROOT_DIR/usr/share/applications/packages.desktop"
-install -m 755 "$KERNEL_DIR/boot-mode/zirarch-x11-refresh.initd" \
-	"$ROOT_DIR/etc/init.d/zirarch-x11-refresh"
+install -m 755 "$ROOT_DIR/usr/src/zirarch/FieldM/fieldm-clock" \
+	"$ROOT_DIR/usr/bin/fieldm-clock"
+install -m 644 "$PROJECT_DIR/FieldM/clock.desktop" \
+	"$ROOT_DIR/usr/share/applications/clock.desktop"
+install -m 644 "$PROJECT_DIR/FieldM/camera.desktop" \
+	"$ROOT_DIR/usr/share/applications/camera.desktop"
+install -m 644 "$PROJECT_DIR/FieldM/clock.desktop" \
+	"$ROOT_DIR/usr/share/applications/clock.desktop"
 sed -i \
 	-e '/need devfs/d' \
 	-e '/need udev/d' \
@@ -253,6 +293,7 @@ EOF
 cat >> "$ROOT_DIR/etc/rc.conf" <<'EOF'
 
 rc_logger="YES"
+rc_parallel="YES"
 EOF
 cat > "$ROOT_DIR/etc/hosts" <<'EOF'
 127.0.0.1 localhost
@@ -392,13 +433,6 @@ start()
 	ip link set rndis0 up
 	ip addr show dev rndis0 | grep -q '192.168.7.2/24' ||
 		ip addr add 192.168.7.2/24 dev rndis0
-	if ! ip route show default | grep -q ' dev wlan0 '; then
-		ip route replace default via 192.168.7.1 dev rndis0 metric 200
-	fi
-
-	ntpdate -u -s time.cloudflare.com 2>/dev/null &&
-		date -u +%s > /var/lib/zirarch/clock
-	hwclock -w 2>/dev/null || true
 }
 EOF
 chmod 755 "$ROOT_DIR/etc/init.d/usb-rndis"
@@ -435,6 +469,7 @@ description="Bring up the Broadcom Wi-Fi interface"
 depend()
 {
 	before wpa-supplicant-zirarch
+	after zirarch-boot-mode
 }
 
 start()
@@ -457,7 +492,7 @@ pidfile="/run/wpa-supplicant-zirarch.pid"
 depend()
 {
 	need wifi-link
-	after wifi-link
+	after wifi-link zirarch-boot-mode
 }
 start_post()
 {
@@ -525,15 +560,14 @@ EOF
 for runlevel in sysinit boot default shutdown; do
 	mkdir -p "$ROOT_DIR/etc/runlevels/$runlevel"
 done
-for service in dmesg procfs sysfs zirarch-early-boot zirarch-haveged; do
+for service in dmesg procfs sysfs zirarch-early-boot; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" sysinit
 done
-chroot "$ROOT_DIR" /sbin/rc-update add fieldm-logs sysinit
-chroot "$ROOT_DIR" /sbin/rc-update add zirarch-clock sysinit
+chroot "$ROOT_DIR" /sbin/rc-update add fieldm-logs default
 chroot "$ROOT_DIR" /sbin/rc-update del udev sysinit 2>/dev/null || true
 chroot "$ROOT_DIR" /sbin/rc-update del udev-trigger sysinit 2>/dev/null || true
-for service in bootmisc hostname hwclock fake-hwclock localmount modules root sysctl; do
+for service in hostname hwclock localmount root sysctl; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] &&
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" boot
 done
@@ -546,9 +580,10 @@ for runlevel in $(find "$ROOT_DIR/etc/runlevels" -mindepth 1 -maxdepth 1 \
 	chroot "$ROOT_DIR" /sbin/rc-update del udev-trigger "$runlevel" 2>/dev/null || true
 	chroot "$ROOT_DIR" /sbin/rc-update del fsck "$runlevel" 2>/dev/null || true
 done
-for service in networking dbus elogind zramswap usb-rndis \
+for service in zirarch-rndis dbus zramswap \
 	zirarch-clock-sync zirarch-sshd wifi-link \
-	wpa-supplicant-zirarch zirarch-boot-mode zirarch-battery; do
+	wpa-supplicant-zirarch zirarch-boot-mode zirarch-battery \
+	zirarch-haveged zirarch-clock zirarch-suspend zirarch-alarm; do
 	[ -e "$ROOT_DIR/etc/init.d/$service" ] ||
 		die "required OpenRC service is missing: $service"
 	chroot "$ROOT_DIR" /sbin/rc-update add "$service" default

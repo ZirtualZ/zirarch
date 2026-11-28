@@ -1,0 +1,26 @@
+#!/bin/sh
+set -u
+
+mkdir -p /root/Pictures
+stamp=$(date +%Y%m%d-%H%M%S)
+for dev in /dev/video*; do
+	[ -c "$dev" ] || continue
+	if command -v ffmpeg >/dev/null 2>&1; then
+		out="/root/Pictures/camera-$stamp.jpg"
+		timeout 5 ffmpeg -hide_banner -loglevel error \
+			-f video4linux2 -i "$dev" \
+			-vframes 1 "$out" >/dev/null 2>&1 && {
+				echo "$out"
+				exit 0
+			}
+	elif command -v v4l2-ctl >/dev/null 2>&1; then
+		out="/root/Pictures/camera-$stamp.ppm"
+		v4l2-ctl -d "$dev" --stream-mmap --stream-count=1 \
+			--stream-to="$out" >/dev/null 2>&1 && {
+				echo "$out"
+				exit 0
+			}
+	fi
+done
+echo "no usable camera capture tool or /dev/video* frame"
+exit 1

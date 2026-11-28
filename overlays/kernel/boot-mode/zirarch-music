@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+
+import glob
+import os
+import subprocess
+import sys
+
+music = os.path.expanduser("~/Music")
+files = []
+for ext in ("*.mp3", "*.ogg", "*.flac", "*.m4a", "*.wav"):
+    files.extend(glob.glob(os.path.join(music, ext)))
+files.sort()
+
+if len(sys.argv) > 1:
+    command = sys.argv[1]
+    if command == "list":
+        for path in files:
+            print(path)
+    elif command == "play" and len(sys.argv) > 2:
+        subprocess.Popen(["mpv", "--no-video", "--really-quiet",
+                          sys.argv[2]])
+    elif command == "pause":
+        subprocess.run(["pkill", "-STOP", "-x", "mpv"])
+    elif command == "resume":
+        subprocess.run(["pkill", "-CONT", "-x", "mpv"])
+    elif command == "stop":
+        subprocess.run(["pkill", "-TERM", "-x", "mpv"])
+else:
+    print("usage: zirarch-music list|play PATH|pause|resume|stop")

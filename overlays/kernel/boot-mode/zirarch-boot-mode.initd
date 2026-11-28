@@ -7,7 +7,8 @@ pidfile="/run/zirarch-boot-mode.pid"
 
 depend()
 {
-	after local networking
+	need dbus fieldm-logs fieldm-bind-mounts
+	before usb-rndis zirarch-sshd
 }
 
 stop()
@@ -15,7 +16,6 @@ stop()
 	rc-service buffyboard stop 2>/dev/null || true
 	start-stop-daemon --stop --pidfile /run/zirarch-tty1.pid 2>/dev/null || true
 	start-stop-daemon --stop --name zirarch-fbconsole 2>/dev/null || true
-	rc-service zirarch-x11-refresh stop 2>/dev/null || true
 	pkill -TERM -x simple-desktop 2>/dev/null || true
 	pkill -TERM -x matchbox-window-manager 2>/dev/null || true
 	pkill -TERM -x fieldm-kbd 2>/dev/null || true

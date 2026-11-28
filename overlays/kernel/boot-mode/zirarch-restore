@@ -1,0 +1,21 @@
+#!/usr/bin/python3
+
+import os
+import subprocess
+import sys
+import glob
+
+backup = sys.argv[1] if len(sys.argv) > 1 else None
+if not backup:
+    found = sorted(glob.glob("/data/backups/zirarch-backup-*.tar.gz"),
+                   reverse=True)
+    if not found:
+        print("no Zirarch backup found")
+        raise SystemExit(1)
+    backup = found[0]
+
+if not os.path.isfile(backup):
+    print("backup not found")
+    raise SystemExit(1)
+subprocess.run(["tar", "-C", "/root", "-xzf", backup], check=True)
+print("restored " + backup)
