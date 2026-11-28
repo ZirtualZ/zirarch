@@ -1,12 +1,12 @@
-# FieldM known bugs
+# FieldM known work
 
-1. Live confirmed devices: `sec_touchscreen:event1`, `gpio_keys.22:event5`; `KEY_BACK=158` press/long-toggle logging is confirmed. Accept `KEY_MENU=139`, `KEY_RECENT=254`, `KEY_APPSELECT=580`, `KEY_HOME=102`, `KEY_HOMEPAGE=172`.
-2. Browser: Back sends Alt+Left; Home shows desktop; Recents opens shell Recents. NetSurf text-entry/zoom real-touch remains.
-3. Recents switch and touch testing remain; `_NET_CLIENT_LIST` and `_NET_ACTIVE_WINDOW` are implemented.
-4. `_NET_CLOSE_WINDOW` fallback needs testing for apps that ignore WM_DELETE_WINDOW.
-5. Matchbox dock/strut behavior is verified; `_NET_WORKAREA` shrinks to `720x960`.
-6. AT-SPI fieldm-imd is installed and debounced; manual keyboard toggle is verified, with Browser text-focus site testing remaining.
-7. Terminal: Back returns Home, physical keyboard toggle remains supported, Ctrl+C/typing live tests pass.
-8. Settings/Packages: Back follows shell/escape table; Wi-Fi low-memory pass remains.
-9. Long-term open/close/switch stress beyond the first 10-app pass remains.
-10. Browser and Recents screenshots are recorded in `screenshots/browser-keyboard.png` and `screenshots/recents-over-app.png`.
+1. Hardware button aliases 139/254/580, 102/172 and 158 are implemented and live-confirmed; contextual Back and the Recents-over-app path are implemented.
+2. Vimb URL-bar focus opens the keyboard and retains the entry lease; a real DuckDuckGo page focus test still needs a reachable network/content run.
+3. Browser cold-start/RAM and network clock sync are recorded; no further browser work is blocking.
+4. Early-boot entropy, firmware timeout, framebuffer reset and splash are live-verified; a measured cold power-on timing sample is still needed.
+5. `log_buf_len` and `vt.global_cursor_default=0` cmdline proposals remain intentionally unapplied pending approval.
+6. Light/dark switching is implemented for FieldM, keyboard, Packages, browser and xterm; the POST renderer uses the saved palette.
+7. POST is framebuffer-native, first-boot gated, input-skippable and hands display ownership to FieldM; Volume Down hold testing remains hardware-interactive.
+8. Hardware Test automatic probes, timeout isolation, logs, export, details and screenshots are complete; interactive display/touch/audio/vibration/sensor/camera checks remain user-driven.
+9. A full cold boot on a rebuilt image is intentionally untested; no images were rebuilt, flashed or partition-written.
+10. Keep new diagnostic screenshots under `screenshots/`; do not flash EFS, CPEFS, RADIO, RECOVERY or bootloader partitions.

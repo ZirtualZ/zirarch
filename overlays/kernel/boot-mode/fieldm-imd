@@ -15,6 +15,7 @@ lock = threading.Lock()
 pending_editable = None
 pending_at = 0.0
 last_editable = None
+editable_application = None
 
 
 def log_message(message):
@@ -74,10 +75,23 @@ def is_editable(event):
 
 
 def on_focus(event):
-    global pending_editable, pending_at
+    global pending_editable, pending_at, editable_application
     editable = bool(getattr(event, "detail1", False)) and is_editable(event)
     if getattr(event, "detail1", False) is False:
         editable = False
+    source = getattr(event, "source", None)
+    application = None
+    try:
+        application = source.getApplication().name
+    except Exception:
+        pass
+    if editable:
+        editable_application = application
+    elif editable_application is not None and application == editable_application:
+        log_message("focus=noneditable action=ignore-reason=same-app-flicker")
+        return
+    elif application != editable_application:
+        editable_application = None
     now = time.monotonic()
     with lock:
         pending_editable = editable
