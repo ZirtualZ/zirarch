@@ -15,12 +15,12 @@ DESTDIR ?=
 
 all: simple-desktop fieldm-packages fieldm-keys fieldm-kbd
 
-DESKTOP_SOURCES = src/desktop.c src/applications.c \
+DESKTOP_SOURCES = src/desktop.c src/applications.c src/theme.c \
 	src/appearance.c src/screen_layout.c src/shell/session.c \
 	src/shell/gtk_shell.c src/shell/desktop_view.c src/shell/launcher.c \
 	src/shell/settings.c src/shell/wifi.c src/shell/icon_themes.c \
 	src/shell/icon_badge.c
-DESKTOP_HEADERS = src/applications.h src/appearance.h \
+DESKTOP_HEADERS = src/applications.h src/appearance.h src/theme.h \
 	src/screen_layout.h src/shell/session.h src/shell/gtk_shell.h \
 	src/shell/gtk_shell_internal.h src/shell/desktop_view.h \
 	src/shell/launcher.h src/shell/settings.h src/shell/icon_themes.h \
@@ -44,15 +44,15 @@ simple-desktop: $(DESKTOP_SOURCES) $(DESKTOP_HEADERS) | check-gtk
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ $(DESKTOP_SOURCES) \
 		$(LDLIBS) $(GTK_LIBS)
 
-fieldm-packages: src/packages.c
-	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ src/packages.c \
+fieldm-packages: src/packages.c src/theme.c src/theme.h
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ src/packages.c src/theme.c \
 		$(LDLIBS) $(GTK_LIBS)
 
 fieldm-keys: src/fieldm-keys.c
 	$(CC) $(CFLAGS) -std=c11 -o $@ src/fieldm-keys.c $(LDLIBS) -lXtst
 
-fieldm-kbd: src/fieldm-kbd.c src/theme.h
-	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ src/fieldm-kbd.c \
+fieldm-kbd: src/fieldm-kbd.c src/theme.c src/theme.h
+	$(CC) $(CFLAGS) $(XFT_CFLAGS) -std=c11 -o $@ src/fieldm-kbd.c src/theme.c \
 		$(LDLIBS) $(XFT_LIBS) -lXtst
 
 install: all
@@ -61,6 +61,10 @@ install: all
 	install -Dm755 fieldm-keys "$(DESTDIR)$(BINDIR)/fieldm-keys"
 	install -Dm755 fieldm-kbd "$(DESTDIR)$(BINDIR)/fieldm-kbd"
 	install -Dm644 data/fieldm.css "$(DESTDIR)/usr/share/fieldm/fieldm.css"
+	install -Dm755 scripts/fieldm-hwprobe \
+		"$(DESTDIR)/usr/lib/fieldm/hwprobe"
+	install -Dm755 scripts/zirarch-post \
+		"$(DESTDIR)/usr/bin/zirarch-post"
 	install -Dm644 data/field-desktop.desktop \
 		"$(DESTDIR)$(XSESSIONDIR)/field-desktop.desktop"
 	install -Dm644 data/packages.desktop \

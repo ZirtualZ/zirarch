@@ -97,6 +97,29 @@ static void layout_signal_handler(int signal)
     else if (signal == SIGUSR2) terminal_off = 1;
 }
 
+static void load_colors(void)
+{
+    int dark = fieldm_theme_is_dark();
+    int screen = DefaultScreen(display);
+    Visual *visual = DefaultVisual(display, screen);
+    Colormap colormap = DefaultColormap(display, screen);
+    if (text_color.pixel != 0) XftColorFree(display, visual, colormap,
+                                             &text_color);
+    if (paper_color.pixel != 0) XftColorFree(display, visual, colormap,
+                                              &paper_color);
+    XftColorAllocName(display, visual, colormap,
+                      dark ? FIELD_M_DARK_FOREGROUND
+                           : FIELD_M_LIGHT_FOREGROUND, &text_color);
+    XftColorAllocName(display, visual, colormap,
+                      dark ? FIELD_M_DARK_BACKGROUND
+                           : FIELD_M_LIGHT_BACKGROUND, &paper_color);
+    if (window != None) {
+        XSetWindowBackground(display, window, paper_color.pixel);
+        XSetWindowBorder(display, window, text_color.pixel);
+        XClearWindow(display, window);
+    }
+}
+
 static unsigned long pixel(const char *name)
 {
     XColor exact, nearest;
@@ -673,8 +696,8 @@ int main(void)
     window = XCreateSimpleWindow(display, RootWindow(display, screen),
                                  0, DisplayHeight(display, screen) - window_height,
                                  WIDTH, (unsigned int)window_height, 0,
-                                 pixel(FIELD_M_FOREGROUND),
-                                 pixel(FIELD_M_BACKGROUND));
+                                 pixel(FIELD_M_LIGHT_FOREGROUND),
+                                 pixel(FIELD_M_LIGHT_BACKGROUND));
     XSelectInput(display, window,
                  ExposureMask | ButtonPressMask | ButtonReleaseMask);
     set_wm_hints();
@@ -686,12 +709,7 @@ int main(void)
     gc = XCreateGC(display, window, 0, NULL);
     draw = XftDrawCreate(display, window, DefaultVisual(display, screen),
                          DefaultColormap(display, screen));
-    XftColorAllocName(display, DefaultVisual(display, screen),
-                      DefaultColormap(display, screen),
-                      FIELD_M_FOREGROUND, &text_color);
-    XftColorAllocName(display, DefaultVisual(display, screen),
-                      DefaultColormap(display, screen),
-                      FIELD_M_BACKGROUND, &paper_color);
+    load_colors();
     update_font();
 
     draw_layout();
@@ -703,6 +721,7 @@ int main(void)
             pressed_index = -1;
             repeat_index = -1;
             load_config();
+            load_colors();
             build_layout();
             update_font();
             update_keyboard_visibility();

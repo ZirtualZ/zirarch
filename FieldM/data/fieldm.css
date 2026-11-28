@@ -1,4 +1,5 @@
-/* FieldM visual constants are mirrored in src/theme.h */
+/* FieldM light and dark colors are mirrored in src/theme.h. Runtime clients
+ * load this sheet and substitute the dark palette when theme=dark. */
 * {
   all: unset;
   font-family: "DejaVu Serif";
@@ -18,6 +19,12 @@ headerbar, notebook header, notebook tab {
   border-radius: 0;
   box-shadow: none;
   background-image: none;
+}
+
+.fieldm-dialog {
+  border: 2px solid #111111;
+  background: #F4F1EA;
+  color: #111111;
 }
 
 label, entry, button, checkbutton, radiobutton, dropdown,

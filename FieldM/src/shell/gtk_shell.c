@@ -5,6 +5,7 @@
 #include "icon_themes.h"
 #include "launcher.h"
 #include "settings.h"
+#include "../theme.h"
 
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -20,19 +21,84 @@
 
 void shell_show_error(GtkWindow *parent, const char *message)
 {
-    GtkAlertDialog *dialog = gtk_alert_dialog_new("%s", message);
-    gtk_alert_dialog_show(dialog, parent);
-    g_object_unref(dialog);
+    GtkWidget *dialog = gtk_window_new();
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    GtkWidget *label = gtk_label_new(message);
+    GtkWidget *close = gtk_button_new_with_label("Close");
+    gtk_widget_add_css_class(dialog, "fieldm-dialog");
+    gtk_window_set_title(GTK_WINDOW(dialog), "FieldM");
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), parent);
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_decorated(GTK_WINDOW(dialog), FALSE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 560, -1);
+    gtk_widget_set_margin_start(content, 24);
+    gtk_widget_set_margin_end(content, 24);
+    gtk_widget_set_margin_top(content, 24);
+    gtk_widget_set_margin_bottom(content, 24);
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+    gtk_box_append(GTK_BOX(content), label);
+    gtk_box_append(GTK_BOX(content), close);
+    gtk_window_set_child(GTK_WINDOW(dialog), content);
+    g_signal_connect_swapped(close, "clicked",
+                             G_CALLBACK(gtk_window_destroy), dialog);
+    gtk_window_present(GTK_WINDOW(dialog));
 }
 
 void shell_update_styles(ShellState *state)
 {
     const char *path = "/usr/share/fieldm/fieldm.css";
     if (g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
-        gtk_css_provider_load_from_path(state->styles, path);
+        char *contents = NULL;
+        gsize length = 0;
+        GError *error = NULL;
+        if (g_file_get_contents(path, &contents, &length, &error)) {
+            char *themed = fieldm_theme_css(contents, state->dark_theme);
+            g_free(contents);
+            if (themed != NULL) {
+                GError *css_error = NULL;
+                gtk_css_provider_load_from_string(state->styles, themed);
+                free(themed);
+                if (css_error != NULL) g_error_free(css_error);
+            }
+        } else {
+            fprintf(stderr, "Could not load FieldM stylesheet: %s\n",
+                    error != NULL ? error->message : "unknown error");
+            g_clear_error(&error);
+        }
         return;
     }
     fprintf(stderr, "Could not find FieldM stylesheet: %s\n", path);
+}
+
+void shell_set_theme(ShellState *state, int dark)
+{
+    state->dark_theme = dark ? 1 : 0;
+    g_setenv("GTK_THEME", state->dark_theme ? "Adwaita:dark" : "Adwaita:light",
+             TRUE);
+    GdkDisplay *gdk_display = gdk_display_get_default();
+    if (gdk_display != NULL) {
+        g_object_set(gtk_settings_get_for_display(gdk_display),
+                     "gtk-application-prefer-dark-theme",
+                     state->dark_theme, NULL);
+    }
+    if (state->styles != NULL) shell_update_styles(state);
+    shell_save_settings(state);
+    fieldm_apply_xresources(state->dark_theme, NULL);
+    char *arguments[] = {"/usr/bin/xrdb", "-merge",
+                         g_build_filename(g_get_home_dir(), ".Xresources", NULL),
+                         NULL};
+    GError *error = NULL;
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_SEARCH_PATH,
+                  NULL, NULL, NULL, &error);
+    g_clear_error(&error);
+    g_free(arguments[2]);
+    FILE *pidfile = fopen("/run/fieldm-keyboard/pid", "r");
+    pid_t pid = 0;
+    if (pidfile != NULL) {
+        if (fscanf(pidfile, "%d", &pid) == 1 && pid > 1) kill(pid, SIGHUP);
+        fclose(pidfile);
+    }
 }
 
 static gboolean reap_application_children(gpointer data)
@@ -76,6 +142,10 @@ static void load_settings(ShellState *state)
                 snprintf(state->icon_theme_id,
                          sizeof(state->icon_theme_id), "%s", line + 11);
             }
+        } else if (strcmp(line, "theme=dark\n") == 0) {
+            state->dark_theme = 1;
+        } else if (strcmp(line, "theme=light\n") == 0) {
+            state->dark_theme = 0;
         }
     }
     fclose(file);
@@ -119,9 +189,11 @@ int shell_save_settings(ShellState *state)
     }
     int failed = fprintf(file,
                          "top_panel=%d\n"
-                         "icon_theme=%s\n",
+                         "icon_theme=%s\n"
+                         "theme=%s\n",
                          state->top_panel,
-                         state->icon_theme_id) < 0;
+                         state->icon_theme_id,
+                         state->dark_theme ? "dark" : "light") < 0;
     if (fclose(file) != 0) {
         failed = 1;
     }
@@ -199,6 +271,7 @@ static void show_desktop(ShellState *state)
     if (state->settings != NULL) {
         gtk_widget_set_visible(state->settings, FALSE);
     }
+    shell_keyboard_command("entry", "off");
     shell_keyboard_command("manual", "off");
     unsigned long showing = 1;
     XChangeProperty(state->xdisplay,
@@ -236,6 +309,7 @@ static void process_x_events(ShellState *state)
                    event.xclient.message_type == state->command_atom &&
                    event.xclient.data.l[0] == 2) {
             if (state->recents != NULL) recents_close(state);
+            shell_keyboard_command("entry", "off");
             if (state->launcher != NULL) {
                 launcher_close(state);
             } else if (state->quick_settings_open) {
@@ -357,6 +431,10 @@ static void create_command_window(ShellState *state)
 static void application_activate(GtkApplication *application, gpointer data)
 {
     ShellState *state = data;
+    GtkSettings *gtk_settings =
+        gtk_settings_get_for_display(gdk_display_get_default());
+    g_object_set(gtk_settings, "gtk-application-prefer-dark-theme",
+                 state->dark_theme, NULL);
     state->application = application;
     g_application_hold(G_APPLICATION(application));
     state->styles = gtk_css_provider_new();
@@ -390,6 +468,8 @@ int gtk_shell_run(int argc, char **argv)
         return 1;
     }
     load_settings(state);
+    g_setenv("GTK_THEME", state->dark_theme ? "Adwaita:dark" : "Adwaita:light",
+             TRUE);
     appearance_init(&state->appearance);
     state->application_count = applications_load(
         state->applications, SHELL_MAX_APPLICATIONS);

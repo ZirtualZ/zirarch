@@ -687,6 +687,7 @@ static int recents_is_shell_class(const XClassHint *class_hint)
 
 void recents_open(ShellState *state)
 {
+    shell_keyboard_command("entry", "off");
     if (state->launcher != NULL) launcher_close(state);
     if (state->quick_settings_open) {
         state->quick_settings_open = 0;
@@ -833,6 +834,7 @@ void recents_open(ShellState *state)
 
 static void quick_settings_close(ShellState *state)
 {
+    shell_keyboard_command("entry", "off");
     state->quick_settings_open = 0;
     if (state->home_stack != NULL) {
         gtk_stack_set_visible_child_name(GTK_STACK(state->home_stack), "home");
@@ -871,6 +873,13 @@ static void quick_gear_clicked(GtkButton *button, gpointer data)
     quick_settings_close(state);
     settings_open(state);
     (void)button;
+}
+
+static void quick_theme_clicked(GtkButton *button, gpointer data)
+{
+    ShellState *state = data;
+    shell_set_theme(state, !state->dark_theme);
+    gtk_button_set_label(button, state->dark_theme ? "Theme\nDark" : "Theme\nLight");
 }
 
 static void quick_brightness_changed(GtkRange *range, gpointer data)
@@ -915,16 +924,21 @@ static GtkWidget *make_quick_settings(ShellState *state)
     GtkWidget *wifi = gtk_button_new_with_label("Wi-Fi\nSettings");
     GtkWidget *keyboard = gtk_button_new_with_label("Keyboard\nShow / hide");
     GtkWidget *gear = gtk_button_new_with_label("Settings");
-    gtk_widget_set_size_request(wifi, 200, 104);
-    gtk_widget_set_size_request(keyboard, 200, 104);
-    gtk_widget_set_size_request(gear, 200, 104);
+    GtkWidget *theme = gtk_button_new_with_label(
+        state->dark_theme ? "Theme\nDark" : "Theme\nLight");
+    gtk_widget_set_size_request(wifi, 150, 104);
+    gtk_widget_set_size_request(keyboard, 150, 104);
+    gtk_widget_set_size_request(gear, 150, 104);
+    gtk_widget_set_size_request(theme, 150, 104);
     gtk_grid_attach(GTK_GRID(tiles), wifi, 0, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(tiles), keyboard, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(tiles), gear, 2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(tiles), theme, 3, 0, 1, 1);
     g_signal_connect(wifi, "clicked", G_CALLBACK(quick_wifi_clicked), state);
     g_signal_connect(keyboard, "clicked",
                      G_CALLBACK(quick_keyboard_clicked), state);
     g_signal_connect(gear, "clicked", G_CALLBACK(quick_gear_clicked), state);
+    g_signal_connect(theme, "clicked", G_CALLBACK(quick_theme_clicked), state);
     gtk_box_append(GTK_BOX(page), tiles);
     GtkWidget *brightness_label = gtk_label_new("Brightness");
     gtk_label_set_xalign(GTK_LABEL(brightness_label), 0.0f);

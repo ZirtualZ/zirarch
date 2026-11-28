@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <gtk/gtk.h>
+#include "theme.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -481,6 +482,10 @@ static gboolean window_closed(GtkWindow *window, gpointer data)
 static void activate(GtkApplication *application, gpointer data)
 {
     PackageState *state = data;
+    int dark = fieldm_theme_is_dark();
+    g_setenv("GTK_THEME", dark ? "Adwaita:dark" : "Adwaita:light", TRUE);
+    g_object_set(gtk_settings_get_for_display(gdk_display_get_default()),
+                 "gtk-application-prefer-dark-theme", dark, NULL);
     state->application = application;
     state->packages = g_ptr_array_new_with_free_func(package_result_free);
     GtkWidget *window = gtk_application_window_new(application);
@@ -493,7 +498,15 @@ static void activate(GtkApplication *application, gpointer data)
     if (!g_file_test(css_path, G_FILE_TEST_IS_REGULAR)) {
         fprintf(stderr, "Could not find FieldM stylesheet: %s\n", css_path);
     } else {
-        gtk_css_provider_load_from_path(css, css_path);
+        char *contents = NULL;
+        if (g_file_get_contents(css_path, &contents, NULL, NULL)) {
+            char *themed = fieldm_theme_css(contents, dark);
+            g_free(contents);
+            if (themed != NULL) {
+                gtk_css_provider_load_from_string(css, themed);
+                free(themed);
+            }
+        }
     }
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(), GTK_STYLE_PROVIDER(css),

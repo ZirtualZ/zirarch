@@ -1,0 +1,329 @@
+#!/bin/sh
+
+# Shared, read-only hardware inventory for Settings and pre-GUI POST.
+# No probe writes hardware state, loads modules, starts a modem, or touches
+# partitions. Interactive validation remains in Settings and is not run here.
+
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+human_path()
+{
+	[ -e "$1" ] || return 1
+	printf '%s' "$1"
+	return 0
+}
+
+emit()
+{
+	a=$(printf '%s' "$1" | tr '\t\r\n' '   ')
+	b=$(printf '%s' "$2" | tr '\t\r\n' '   ')
+	c=$(printf '%s' "$3" | tr '\t\r\n' '   ')
+	d=$(printf '%s' "$4" | tr '\t\r\n' '   ')
+	printf '%s\t%s\t%s\t%s\n' "$a" "$b" "$c" "$d"
+}
+
+read_trim()
+{
+	[ -r "$1" ] || return 1
+	sed -n '1{s/[[:space:]]*$//;p;q;}' "$1" 2>/dev/null
+}
+
+probe_display()
+{
+	size=$(read_trim /sys/class/graphics/fb0/virtual_size)
+	mode=$(read_trim /sys/class/graphics/fb0/mode)
+	[ -n "$size" ] && emit display PASS "Display" "fb0 ${size}${mode:+ $mode}"
+	[ -n "$size" ] || emit display "NOT FOUND" "Display" "fb0 is unavailable"
+}
+
+probe_touchscreen()
+{
+	found=
+	for f in /sys/class/input/event*/device/name; do
+		name=$(read_trim "$f") || continue
+		case "$name" in
+			*touch*|*Touch*|sec_touchscreen) found="${found}${found:+, }${f%/device/name}: $name" ;;
+		esac
+	done
+	[ -n "$found" ] && emit touchscreen PASS Touchscreen "$found" ||
+		emit touchscreen "NOT FOUND" Touchscreen "no touchscreen input device"
+}
+
+probe_hardware_keys()
+{
+	found=
+	for f in /sys/class/input/event*/device/name; do
+		name=$(read_trim "$f") || continue
+		case "$name" in
+			*gpio*key*|*power*|*keypad*|sec_powerkey)
+				found="${found}${found:+, }${f%/device/name}: $name" ;;
+		esac
+	done
+	[ -n "$found" ] &&
+		emit hardware-keys "NEEDS CHECK" "Hardware keys" "$found; press each key interactively" ||
+		emit hardware-keys "NOT FOUND" "Hardware keys" "no key input device"
+}
+
+probe_audio()
+{
+	cards=$(sed -n '/^[[:space:]]*[0-9]/p' /proc/asound/cards 2>/dev/null |
+		tr '\n' ';' | sed 's/;$/ /')
+	[ -n "$cards" ] &&
+		emit "$1" "NEEDS CHECK" "$2" "$cards; output $2 only during interactive test" ||
+		emit "$1" "NOT FOUND" "$2" "no ALSA card listed"
+}
+
+probe_vibration()
+{
+	nodes=
+	for node in /sys/class/timed_output/vibrator/enable \
+		/sys/class/leds/*vibrat* /sys/class/leds/*haptic*; do
+		[ -e "$node" ] && nodes="${nodes}${nodes:+, }$node"
+	done
+	[ -n "$nodes" ] &&
+		emit vibration "NEEDS CHECK" Vibration "$nodes; interactive pulse required" ||
+		emit vibration "NOT FOUND" Vibration "no vibrator node"
+}
+
+probe_sensors()
+{
+	found=
+	for path in /sys/bus/iio/devices/iio:device* \
+		/sys/class/input/event*/device/name \
+		/sys/class/sensors/*; do
+		[ -e "$path" ] || continue
+		name=$(basename "$path")
+		[ -f "$path" ] && value=$(read_trim "$path") || value=
+		case "$name:$value" in
+			*accel*|*proxi*|*light*|*mag*|*gyro*|iio:device*) found="${found}${found:+, }$path${value:+ ($value)}" ;;
+		esac
+	done
+	[ -n "$found" ] &&
+		emit sensors "NEEDS CHECK" Sensors "$found; movement/coverage comparison required" ||
+		emit sensors "NOT FOUND" Sensors "no IIO, sensor class, or sensor input node"
+}
+
+probe_battery()
+{
+	for supply in /sys/class/power_supply/*; do
+		[ -d "$supply" ] || continue
+		type=$(read_trim "$supply/type")
+		[ "$type" = Battery ] || continue
+		capacity=$(read_trim "$supply/capacity")
+		status=$(read_trim "$supply/status")
+		voltage=$(read_trim "$supply/voltage_now")
+		emit battery PASS Battery "$supply capacity=${capacity:-unknown}% status=${status:-unknown} voltage=${voltage:-unknown}"
+		return
+	done
+	emit battery "NOT FOUND" Battery "no power_supply Battery entry"
+}
+
+probe_backlight()
+{
+	found=
+	for path in /sys/class/backlight/*; do
+		[ -d "$path" ] || continue
+		found="${found}${found:+, }$path ($(read_trim "$path/brightness")/$(read_trim "$path/max_brightness"))"
+	done
+	[ -n "$found" ] &&
+		emit backlight "NEEDS CHECK" Backlight "$found; ramp/restore is interactive" ||
+		emit backlight "NOT FOUND" Backlight "no backlight class device"
+}
+
+probe_wifi()
+{
+	if [ -d /sys/class/net/wlan0 ]; then
+		driver=
+		[ -e /sys/class/net/wlan0/device/driver ] &&
+			driver=$(readlink /sys/class/net/wlan0/device/driver 2>/dev/null)
+		state=$(read_trim /sys/class/net/wlan0/operstate)
+		emit wifi PASS Wi-Fi "wlan0 state=${state:-unknown} driver=${driver:-unknown}; scan requires interaction"
+	else
+		emit wifi "NOT FOUND" Wi-Fi "wlan0 is unavailable"
+	fi
+}
+
+probe_bluetooth()
+{
+	[ -d /sys/class/bluetooth/hci0 ] &&
+		emit bluetooth PASS Bluetooth "/sys/class/bluetooth/hci0 present" ||
+		emit bluetooth "NOT FOUND" Bluetooth "hci0 is unavailable"
+}
+
+probe_cameras()
+{
+	found=
+	for dev in /dev/video*; do
+		[ -c "$dev" ] || continue
+		found="${found}${found:+, }$dev"
+	done
+	[ -n "$found" ] &&
+		emit cameras "NEEDS CHECK" Cameras "$found; node present, frame capture is interactive" ||
+		emit cameras "NOT FOUND" Cameras "no /dev/video* node"
+}
+
+probe_gps()
+{
+	found=
+	for dev in /dev/gnss* /dev/tty*gnss* /dev/smd* /sys/class/gnss/*; do
+		[ -e "$dev" ] && found="${found}${found:+, }$dev"
+	done
+	[ -n "$found" ] && emit gps PASS GPS "$found" ||
+		emit gps "NOT FOUND" GPS "no GNSS/sysfs node"
+}
+
+probe_modem()
+{
+	found=
+	for dev in /dev/modem* /dev/ttyUSB* /sys/class/net/rmnet* /sys/class/net/ccmni*; do
+		[ -e "$dev" ] && found="${found}${found:+, }$dev"
+	done
+	[ -n "$found" ] && emit modem "NEEDS CHECK" Modem "$found; presence only, modem not accessed" ||
+		emit modem "NOT FOUND" Modem "no modem node discovered"
+}
+
+probe_storage()
+{
+	root=$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4 " KiB free on " $1}')
+	sd=
+	[ -e /dev/mmcblk1 ] && sd="/dev/mmcblk1 present"
+	[ -n "$root" ] && emit storage PASS Storage "${root}${sd:+; $sd}" ||
+		emit storage FAIL Storage "root filesystem usage unavailable"
+}
+
+probe_rtc()
+{
+	[ -r /dev/rtc0 ] || { emit rtc "NOT FOUND" RTC "/dev/rtc0 unavailable"; return; }
+	now=$(cat /proc/sys/kernel/time/rtc_time 2>/dev/null || :)
+	[ -n "$now" ] && emit rtc PASS RTC "$now" ||
+		emit rtc "NEEDS CHECK" RTC "/dev/rtc0 exists; kernel RTC time unavailable"
+}
+
+probe_usb_network()
+{
+	found=
+	for iface in rndis0 usb0; do
+		[ -d "/sys/class/net/$iface" ] || continue
+		addr=$(ip -4 -o address show dev "$iface" 2>/dev/null | awk '{print $4}')
+		found="${found}${found:+, }$iface ${addr:-no-address}"
+	done
+	[ -n "$found" ] && emit usb-network PASS "USB networking" "$found" ||
+		emit usb-network "NOT FOUND" "USB networking" "no RNDIS/USB network interface"
+}
+
+probe_clock()
+{
+	status=
+	[ -r /run/zirarch-clock-status ] &&
+		status=$(sed -n '1{s/[[:space:]].*//;p;q;}' /run/zirarch-clock-status)
+	[ "$status" = synced ] &&
+		emit clock PASS Clock "clock status synced" ||
+		emit clock WARN Clock "clock is not marked synced"
+}
+
+probe_kernel()
+{
+	release=$(read_trim /proc/sys/kernel/osrelease)
+	uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null || :)
+	emit kernel PASS Kernel "${release:-unavailable} (boot ${uptime:-unknown}s)"
+}
+
+probe_services()
+{
+	started=$(rc-status default 2>/dev/null | grep -c '\[  started  \]' || :)
+	failed=$(rc-status --crashed 2>/dev/null |
+		awk '/\[[[:space:]]*(crashed|failed)[[:space:]]*\]/{print $1}' |
+		tr '\n' ' ')
+	[ -z "$failed" ] &&
+		emit services PASS Services "${started:-0} OpenRC services started, 0 failed; GUI starts next" ||
+		emit services FAIL Services "failed: $failed"
+}
+
+single()
+{
+	case "$1" in
+		display) probe_display ;;
+		touchscreen) probe_touchscreen ;;
+		hardware-keys) probe_hardware_keys ;;
+		speaker) probe_audio speaker Speaker ;;
+		microphone) probe_audio microphone Microphone ;;
+		vibration) probe_vibration ;;
+		sensors) probe_sensors ;;
+		battery) probe_battery ;;
+		backlight) probe_backlight ;;
+		wifi) probe_wifi ;;
+		bluetooth) probe_bluetooth ;;
+		cameras) probe_cameras ;;
+		gps) probe_gps ;;
+		modem) probe_modem ;;
+		storage) probe_storage ;;
+		rtc) probe_rtc ;;
+		usb-network) probe_usb_network ;;
+		clock) probe_clock ;;
+		kernel) probe_kernel ;;
+		services) probe_services ;;
+		*) printf '%s\tFAIL\tUnknown\tprobe is not defined\n' "$1"; return 2 ;;
+	esac
+}
+
+run_parallel()
+{
+	kind=$1
+	shift
+	state=${FIELD_M_PROBE_STATE:-/run/fieldm-hwprobe-$$}
+	limit=10
+	[ "$kind" != post ] || limit=1
+	mkdir -p "$state" || exit 1
+	trap 'rm -rf "$state"' EXIT HUP INT TERM
+	for id in "$@"; do
+		(
+			if command -v timeout >/dev/null 2>&1; then
+				timeout "$limit" "$0" --single "$id"
+			else
+				"$0" --single "$id"
+			fi
+			case $? in
+				124) printf '%s\tTIMEOUT\t%s\tprobe exceeded %s seconds\n' "$id" "$id" "$limit" ;;
+			esac
+		) >"$state/$id" 2>&1 &
+	done
+	i=0
+	for id in "$@"; do
+		i=$((i + 1))
+		wait
+	done
+	# Fixed id order keeps Settings and POST reports stable.
+	for id in "$@"; do cat "$state/$id"; done
+	rm -rf "$state"
+}
+
+ALL='display touchscreen hardware-keys speaker microphone vibration sensors battery backlight wifi bluetooth cameras gps modem storage rtc usb-network'
+POST='kernel storage display touchscreen wifi battery clock sensors services'
+
+case "${1:-}" in
+	--single)
+		shift
+		[ "$#" -eq 1 ] || exit 2
+		single "$1"
+		;;
+	--list) printf '%s\n' $ALL ;;
+	--log)
+		shift
+		mkdir -p /var/log
+		if [ "${1:-all}" = all ]; then
+			set -- $ALL
+			run_parallel all "$@" | tee /var/log/fieldm-hwtest.txt
+		else
+			run_parallel all "$@" | tee -a /var/log/fieldm-hwtest.txt
+		fi
+		;;
+	post|--post)
+		run_parallel post $POST
+		;;
+	all|"")
+		run_parallel all $ALL
+		;;
+	*) single "$1" ;;
+esac

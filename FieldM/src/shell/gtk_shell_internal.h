@@ -70,6 +70,7 @@ typedef struct {
     GtkCssProvider *styles;
     int command_selection_failed;
     int top_panel;
+    int dark_theme;
     guint x_source;
     guint status_source;
     guint reap_source;
@@ -84,6 +85,7 @@ typedef struct {
 
 void shell_show_error(GtkWindow *parent, const char *message);
 void shell_update_styles(ShellState *state);
+void shell_set_theme(ShellState *state, int dark);
 void shell_update_wallpapers(ShellState *state);
 void shell_publish_features(ShellState *state);
 int shell_save_settings(ShellState *state);
