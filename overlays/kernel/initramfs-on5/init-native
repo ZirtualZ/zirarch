@@ -76,8 +76,24 @@ fi
 
 [ -b "$SYSTEM_DEVICE" ] || SYSTEM_DEVICE=/dev/mmcblk0p19
 wait_for_device "$SYSTEM_DEVICE" || rescue "SYSTEM device did not appear."
-"$BB" mount -t ext4 -o rw,relatime "$SYSTEM_DEVICE" /newroot ||
-	rescue "Could not mount SYSTEM at /newroot."
+ROOT_DEVICE=$SYSTEM_DEVICE
+tries=20
+while [ "$tries" -gt 0 ]; do
+	for sd_device in /dev/mmcblk1p1 /dev/mmcblk1p2 /dev/mmcblk1; do
+		[ -b "$sd_device" ] || continue
+		label=$("$BB" blkid -o value -s LABEL "$sd_device" 2>/dev/null)
+		if [ "$label" = zirarch-root ]; then
+			ROOT_DEVICE=$sd_device
+			tries=0
+			break
+		fi
+	done
+	[ "$tries" -eq 0 ] && break
+	tries=$((tries - 1))
+	"$BB" sleep 0.1
+done
+"$BB" mount -t ext4 -o rw,relatime "$ROOT_DEVICE" /newroot ||
+	rescue "Could not mount root device at /newroot."
 [ -x /newroot/sbin/init ] || rescue "Missing /newroot/sbin/init."
 
 "$BB" mkdir -p /newroot/var/log

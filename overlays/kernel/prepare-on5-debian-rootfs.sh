@@ -184,6 +184,8 @@ install -m 755 "$KERNEL_DIR/boot-mode/fieldm-desktop-launch" \
 	"$ROOT_DIR/usr/bin/fieldm-desktop-launch"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-keyboard" \
 	"$ROOT_DIR/usr/bin/fieldm-keyboard"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-storage" \
+	"$ROOT_DIR/usr/bin/fieldm-storage"
 chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
 	/usr/bin/fieldm-hide-keyboard \
 	/usr/src/zirarch/fieldm-hide-keyboard.c
@@ -257,10 +259,18 @@ nameserver 8.8.8.8
 EOF
 cat > "$ROOT_DIR/etc/fstab" <<'EOF'
 LABEL=SYSTEM / ext4 rw,relatime,errors=remount-ro 0 0
+LABEL=zirarch-data /data ext4 defaults,noatime 0 2
+/data/root /root none bind 0 0
+/data/apt-cache /var/cache/apt none bind 0 0
+/data/app-data /var/lib/zirarch none bind 0 0
+/data/fieldm /var/lib/fieldm none bind 0 0
 proc /proc proc defaults 0 0
 sysfs /sys sysfs defaults 0 0
 devpts /dev/pts devpts gid=5,mode=620 0 0
 EOF
+printf 'America/Chicago\n' > "$ROOT_DIR/etc/timezone"
+mkdir -p "$ROOT_DIR/usr/share/zoneinfo/America"
+ln -sfn /usr/share/zoneinfo/America/Chicago "$ROOT_DIR/etc/localtime"
 cat > "$ROOT_DIR/etc/inittab" <<'EOF'
 id:3:initdefault:
 si::sysinit:/sbin/openrc sysinit
