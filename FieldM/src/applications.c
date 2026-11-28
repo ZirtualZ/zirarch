@@ -319,6 +319,7 @@ size_t applications_load(Application *applications, size_t capacity)
 
     size_t output_count = 0;
     int terminal_added = 0;
+    int browser_added = 0;
     for (size_t i = 0; i < count; ++i) {
         Application *app = &applications[i];
         char name[APPLICATION_NAME_SIZE];
@@ -335,6 +336,17 @@ size_t applications_load(Application *applications, size_t capacity)
             if (terminal_added) continue;
             snprintf(app->name, sizeof(app->name), "Terminal");
             terminal_added = 1;
+        }
+        int browser_alias =
+            strstr(name, "browser") != NULL ||
+            strstr(name, "netsurf") != NULL ||
+            strstr(name, "firefox") != NULL ||
+            strstr(name, "chromium") != NULL ||
+            strstr(app->categories, "WebBrowser") != NULL;
+        if (browser_alias) {
+            if (browser_added) continue;
+            snprintf(app->name, sizeof(app->name), "Browser");
+            browser_added = 1;
         }
         if (output_count != i) applications[output_count] = *app;
         ++output_count;
@@ -631,6 +643,25 @@ int application_launch_with_catalog(const Application *application,
         return 0;
     }
 
+    if (argument_count > 0 &&
+        (strstr(arguments[0], "netsurf-gtk") != NULL ||
+         strstr(arguments[0], "/netsurf") != NULL) &&
+        argument_count < MAX_EXEC_ARGUMENTS) {
+        int has_url = 0;
+        for (size_t i = 1; i < argument_count; ++i) {
+            if (strstr(arguments[i], "://") != NULL ||
+                strncmp(arguments[i], "about:", 6) == 0 ||
+                strncmp(arguments[i], "file:", 5) == 0) {
+                has_url = 1;
+                break;
+            }
+        }
+        if (!has_url) {
+            arguments[argument_count++] = (char *)"about:blank";
+            arguments[argument_count] = NULL;
+        }
+    }
+
     int launched;
     if (application->terminal) {
         free_arguments(arguments, argument_count);
@@ -680,7 +711,8 @@ static int known_kind_executable(const Application *application,
 {
     static const char *const browsers[] = {
         "firefox", "firefox-esr", "chromium", "chromium-browser",
-        "google-chrome", "brave", "librewolf", "epiphany"
+        "google-chrome", "brave", "librewolf", "epiphany",
+        "netsurf-gtk", "netsurf"
     };
     static const char *const file_managers[] = {
         "thunar", "pcmanfm", "pcmanfm-qt", "nemo", "dolphin",
@@ -704,7 +736,8 @@ static int launch_fallback(ApplicationKind kind)
 {
     static const char *const browsers[] = {
         "firefox", "firefox-esr", "chromium", "chromium-browser",
-        "google-chrome", "brave", "librewolf", "epiphany"
+        "google-chrome", "brave", "librewolf", "epiphany",
+        "netsurf-gtk", "netsurf"
     };
     static const char *const file_managers[] = {
         "xdg-open", "thunar", "pcmanfm", "pcmanfm-qt", "nemo",
@@ -721,6 +754,11 @@ static int launch_fallback(ApplicationKind kind)
             continue;
         }
         char *arguments[3] = {(char *)names[i], NULL, NULL};
+        if (kind == APPLICATION_BROWSER &&
+            (strcmp(names[i], "netsurf-gtk") == 0 ||
+             strcmp(names[i], "netsurf") == 0)) {
+            arguments[1] = (char *)"about:blank";
+        }
         if (kind == APPLICATION_FILE_MANAGER &&
             (strcmp(names[i], "xdg-open") == 0 ||
              strcmp(names[i], "thunar") == 0 ||
@@ -754,7 +792,8 @@ int applications_kind_available(const Application *applications, size_t count,
 
     static const char *const browsers[] = {
         "firefox", "firefox-esr", "chromium", "chromium-browser",
-        "google-chrome", "brave", "librewolf", "epiphany"
+        "google-chrome", "brave", "librewolf", "epiphany",
+        "netsurf-gtk", "netsurf"
     };
     static const char *const file_managers[] = {
         "xdg-open", "thunar", "pcmanfm", "pcmanfm-qt", "nemo",

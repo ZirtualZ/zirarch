@@ -897,6 +897,13 @@ mystery freezes.
 - hide the Browser slot if unavailable;
 - document memory limits and whether the browser is supported.
 
+**Status:** NetSurf/GTK is installed on the live ARMv7 target and is now
+recognized explicitly in FieldM browser launch/fallback logic. Browser
+windows are classified as text contexts so the on-screen keyboard can be
+started; launching no-URL NetSurf now supplies `about:blank` instead of
+exiting with `BadURL`. Live open/close smoke tests pass, while text-entry,
+scrolling, zoom, and screenshot tests remain.
+
 ## Step 11.3: Package manager polish
 
 - prevent apt operations outside root workflows;

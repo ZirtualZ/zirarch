@@ -229,6 +229,13 @@ static void process_x_events(ShellState *state)
         } else if (event.type == ClientMessage &&
                    event.xclient.window == state->command_window &&
                    event.xclient.message_type == state->command_atom &&
+                   event.xclient.data.l[0] == 6) {
+            applications_launch_kind(state->applications,
+                                     state->application_count,
+                                     APPLICATION_BROWSER);
+        } else if (event.type == ClientMessage &&
+                   event.xclient.window == state->command_window &&
+                   event.xclient.message_type == state->command_atom &&
                    event.xclient.data.l[0] >= 3 &&
                    event.xclient.data.l[0] <= 5) {
             if (state->launcher != NULL) {

@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <poll.h>
+#include <strings.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ typedef struct {
     int height;
     int fullscreen;
     int terminal;
+    int browser;
     int dialog;
 } ManagedWindow;
 
@@ -303,6 +305,54 @@ static int client_is_terminal(Window window)
     return terminal;
 }
 
+static int text_matches_browser(const char *text)
+{
+    static const char *const names[] = {
+        "netsurf", "netsurf-gtk", "netsurf-bin", "chromium",
+        "google-chrome", "firefox", "librewolf", "epiphany"
+    };
+    if (text == NULL) {
+        return 0;
+    }
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const char *needle = names[i];
+        for (const char *cursor = text; *cursor != '\0'; ++cursor) {
+            const char *left = cursor;
+            const char *right = needle;
+            while (*left != '\0' && *right != '\0' &&
+                   tolower((unsigned char)*left) ==
+                       tolower((unsigned char)*right)) {
+                ++left;
+                ++right;
+            }
+            if (*right == '\0') {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int client_is_browser(Window window)
+{
+    XClassHint hint = {0};
+    int browser = 0;
+    if (XGetClassHint(display, window, &hint)) {
+        browser = text_matches_browser(hint.res_name) ||
+                  text_matches_browser(hint.res_class);
+        XFree(hint.res_name);
+        XFree(hint.res_class);
+    }
+    if (!browser) {
+        char *name = NULL;
+        if (XFetchName(display, window, &name) && name != NULL) {
+            browser = text_matches_browser(name);
+            XFree(name);
+        }
+    }
+    return browser;
+}
+
 static int text_matches_keyboard(const char *text)
 {
     static const char *const names[] = {"svkbd", "fieldm-kbd"};
@@ -398,11 +448,14 @@ static void sync_terminal_state(int index)
         return;
     }
     int terminal = client_is_terminal(clients[index].client);
-    if (terminal == clients[index].terminal) {
+    int browser = client_is_browser(clients[index].client);
+    if (terminal == clients[index].terminal &&
+        browser == clients[index].browser) {
         return;
     }
     clients[index].terminal = terminal;
-    if (terminal) {
+    clients[index].browser = browser;
+    if (terminal || browser) {
         if (terminal_count++ == 0) {
             terminal_keyboard_command("on");
         }
@@ -879,6 +932,7 @@ static void manage_window(Window client)
     ManagedWindow *managed = &clients[index];
     managed->client = client;
     managed->terminal = 0;
+    managed->browser = 0;
     managed->fullscreen = client_has_state(
         client, "_NET_WM_STATE_FULLSCREEN");
     Window transient_for = None;
@@ -956,7 +1010,8 @@ static void forget_client(int index)
     }
     Window frame = clients[index].frame;
     int was_focused = focused == index;
-    if (clients[index].terminal && --terminal_count == 0) {
+    if ((clients[index].terminal || clients[index].browser) &&
+        --terminal_count == 0) {
         terminal_keyboard_command("off");
     }
     XDestroyWindow(display, frame);
