@@ -1,0 +1,36 @@
+#!/bin/sh
+set -u
+
+PROBE=/usr/lib/fieldm/hwprobe
+FRAMEBUFFER=/usr/bin/zirarch-fbconsole
+LOG=/var/log/zirarch-post.log
+DONE=/var/lib/zirarch/post-done
+EVERY=/var/lib/zirarch/post-every-boot
+
+case "${1:-}" in
+	--force)
+		RENDER_FRAMEBUFFER=0
+		;;
+	--boot)
+		RENDER_FRAMEBUFFER=1
+		[ -e "$EVERY" ] || [ ! -e "$DONE" ] || exit 0
+		;;
+	*)
+		RENDER_FRAMEBUFFER=0
+		set -- --force
+		;;
+esac
+
+mkdir -p /var/lib/zirarch /var/log
+: >"$LOG"
+{
+	printf 'ZIRARCH POST  -  Samsung Galaxy On5 SM-G550T\n'
+	"$PROBE" post
+} 2>&1 | tee "$LOG" |
+	if [ "$RENDER_FRAMEBUFFER" -eq 1 ] && [ -x "$FRAMEBUFFER" ]; then
+		"$FRAMEBUFFER" --post
+	else
+		cat >/dev/null
+	fi
+touch "$DONE"
+exit 0

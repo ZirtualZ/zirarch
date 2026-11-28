@@ -29,6 +29,11 @@ log_message()
 }
 case "$mode" in
 	gui)
+		start-stop-daemon --stop --name zirarch-fbconsole 2>/dev/null || true
+		[ ! -x /usr/bin/zirarch-post ] ||
+			/usr/bin/zirarch-post --boot
+		start-stop-daemon --stop --name zirarch-fbconsole 2>/dev/null || true
+		sleep 1
 		exec /usr/bin/fieldm-session
 		;;
 	tty)

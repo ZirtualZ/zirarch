@@ -116,7 +116,8 @@ static void rectangle(int x, int y, int width, int height,
 			pixel(col, row, r, g, b);
 }
 
-static void glyph_at(int x, int y, unsigned char c, int scale)
+static void glyph_color_at(int x, int y, unsigned char c, int scale,
+	uint8_t r, uint8_t g, uint8_t b)
 {
 	const uint8_t *glyph = font_8x16 + (uint32_t)c * 16;
 	int row, col, sx, sy;
@@ -127,7 +128,12 @@ static void glyph_at(int x, int y, unsigned char c, int scale)
 					for (sx = 0; sx < scale; sx++)
 						pixel(x + col * scale + sx,
 							y + row * scale + sy,
-							255, 255, 255);
+							r, g, b);
+}
+
+static void glyph_at(int x, int y, unsigned char c, int scale)
+{
+	glyph_color_at(x, y, c, scale, 255, 255, 255);
 }
 
 static void label_at(int x, int y, int width, const char *label)
@@ -740,6 +746,179 @@ static void draw_centered_text(int y, const char *text, int scale)
 	text_at((WIDTH - width) / 2, y, text, scale);
 }
 
+static int post_dark_theme(void)
+{
+	char line[128];
+	FILE *file = fopen("/root/.config/simple-desktop/features", "r");
+	int dark = 0;
+
+	if (!file)
+		return 0;
+	while (fgets(line, sizeof(line), file)) {
+		if (!strncmp(line, "theme=dark", strlen("theme=dark"))) {
+			dark = 1;
+			break;
+		}
+	}
+	fclose(file);
+	return dark;
+}
+
+static void post_status(const char *status, char *mapped, size_t length)
+{
+	if (!strcmp(status, "PASS"))
+		snprintf(mapped, length, "OK");
+	else if (!strcmp(status, "NEEDS CHECK"))
+		snprintf(mapped, length, "CHECK");
+	else
+		snprintf(mapped, length, "%.*s", (int)length - 1, status);
+}
+
+static void format_post_line(char *line, char *formatted, size_t length)
+{
+	char status[16], label[32], detail[48];
+	char *first, *second, *third, *end, *p;
+	int dots, dot_count, used;
+
+	end = line + strcspn(line, "\r\n");
+	*end = '\0';
+	first = strchr(line, '\t');
+	second = first ? strchr(first + 1, '\t') : NULL;
+	third = second ? strchr(second + 1, '\t') : NULL;
+	if (!first || !second || !third) {
+		snprintf(formatted, length, "%.*s", (int)length - 1, line);
+		return;
+	}
+	*first = *second = *third = '\0';
+	post_status(first + 1, status, sizeof(status));
+	snprintf(label, sizeof(label), "%.*s", (int)sizeof(label) - 1,
+		second + 1);
+	snprintf(detail, sizeof(detail), "%.*s", (int)sizeof(detail) - 1,
+		third + 1);
+	used = snprintf(formatted, length, "%-24.24s", label);
+	if (used < 0 || (size_t)used >= length)
+		return;
+	dot_count = 52 - used - (int)strlen(status);
+	if (dot_count < 3)
+		dot_count = 3;
+	p = formatted + used;
+	for (dots = 0; dots < dot_count && (size_t)(p - formatted) + 1 < length;
+	     dots++)
+		*p++ = '.';
+	*p = '\0';
+	snprintf(p, length - (size_t)(p - formatted), "%s  %.30s",
+		status, detail);
+}
+
+static void draw_post_screen(char lines[][96], size_t count)
+{
+	const char *heading = "ZIRARCH POST  -  Samsung Galaxy On5 SM-G550T";
+	int dark = post_dark_theme();
+	uint8_t background = dark ? 22 : 244;
+	uint8_t background_g = dark ? 21 : 241;
+	uint8_t background_b = dark ? 19 : 234;
+	uint8_t ink = dark ? 234 : 17;
+	uint8_t ink_g = dark ? 230 : 17;
+	uint8_t ink_b = dark ? 221 : 17;
+	size_t line, offset;
+	size_t heading_length = strlen(heading);
+	int y = 92;
+
+	rectangle(0, 0, WIDTH, HEIGHT, background, background_g, background_b);
+	for (offset = 0; offset < heading_length; offset++)
+		glyph_color_at((WIDTH - heading_length * 16) / 2 + offset * 16, 40,
+			heading[offset], 2, ink, ink_g, ink_b);
+	for (line = 0; line < count && y < HEIGHT - 80; line++) {
+		const char *p = lines[line];
+		int x = 32;
+		while (*p && x < WIDTH - 32) {
+			glyph_color_at(x, y, *p++, 1, ink, ink_g, ink_b);
+			x += 8;
+		}
+		y += 42;
+	}
+	{
+		const char *footer = "Any key/tap: continue    Hold VOL DOWN: pause";
+		for (offset = 0; footer[offset]; offset++)
+			glyph_color_at(64 + offset * 8, HEIGHT - 48,
+				footer[offset], 1, ink, ink_g, ink_b);
+	}
+	refresh();
+}
+
+static int post_screen(void)
+{
+	char raw[256], formatted[96];
+	char lines[24][96];
+	size_t count = 0;
+	struct timeval now, deadline = { 0, 0 };
+	int eof = 0, paused = 0;
+
+	open_touchscreen();
+	powerfd = open_power_button();
+	lines[0][0] = '\0';
+	draw_post_screen(lines, 0);
+
+	for (;;) {
+		struct pollfd inputs[3];
+		struct arm_input_event event;
+		int ready, milliseconds = 100;
+
+		gettimeofday(&now, NULL);
+		if (eof && !paused) {
+			if (!deadline.tv_sec) {
+				deadline = now;
+				deadline.tv_sec += 5;
+			}
+			if (timercmp(&now, &deadline, >=))
+				return 0;
+		}
+		inputs[0].fd = STDIN_FILENO;
+		inputs[0].events = eof ? 0 : POLLIN;
+		inputs[1].fd = touchfd;
+		inputs[1].events = touchfd >= 0 ? POLLIN : 0;
+		inputs[2].fd = powerfd;
+		inputs[2].events = powerfd >= 0 ? POLLIN : 0;
+		ready = poll(inputs, 3, milliseconds);
+		if (ready > 0 && !eof && inputs[0].revents & (POLLIN | POLLHUP)) {
+			if (fgets(raw, sizeof(raw), stdin)) {
+				if (!strncmp(raw, "ZIRARCH POST  -", 15))
+					continue;
+				if (count < 24) {
+					format_post_line(raw, formatted, sizeof(formatted));
+					snprintf(lines[count++], sizeof(lines[0]), "%s",
+						formatted);
+					draw_post_screen(lines, count);
+				}
+			} else {
+				eof = 1;
+			}
+		}
+		if (touchfd >= 0 && inputs[1].revents & POLLIN) {
+			while (read(touchfd, &event, sizeof(event)) == sizeof(event)) {
+				if ((event.type == EV_KEY && event.code == BTN_TOUCH &&
+				     event.value == 1) ||
+				    (event.type == EV_ABS &&
+				     event.code == ABS_MT_TRACKING_ID &&
+				     event.value >= 0))
+					return 0;
+			}
+		}
+		if (powerfd >= 0 && inputs[2].revents & POLLIN) {
+			while (read(powerfd, &event, sizeof(event)) == sizeof(event)) {
+				if (event.type != EV_KEY)
+					continue;
+				if (event.code == KEY_VOLUMEDOWN) {
+					paused = event.value != 0;
+					deadline.tv_sec = 0;
+				} else if (event.value == 1) {
+					return 0;
+				}
+			}
+		}
+	}
+}
+
 static void draw_boot_menu(int seconds)
 {
 	char countdown[32];
@@ -962,6 +1141,8 @@ int main(int argc, char **argv)
 		powerfd = open_power_button();
 		return boot_menu();
 	}
+	if (argc > 1 && strcmp(argv[1], "--post") == 0)
+		return post_screen();
 	clear_screen();
 	refresh();
 	trace("display-open\n");

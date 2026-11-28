@@ -25,4 +25,15 @@ rm -f /run/fieldm-keyboard/manual \
 rm -f /run/fieldm-keyboard/hide-sequence
 /usr/bin/fieldm-keyboard warm
 
+uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null || printf unknown)
+printf '%s\n' "$uptime" > /run/zirarch-gui-started
+if [ -r /var/log/zirarch-post.log ]; then
+	tmp=/var/log/zirarch-post.log.gui
+	{
+		grep -v '^gui	' /var/log/zirarch-post.log 2>/dev/null || true
+		printf 'gui\tPASS\tGUI\tFieldM started at %ss after boot\n' "$uptime"
+	} > "$tmp"
+	mv "$tmp" /var/log/zirarch-post.log
+fi
+
 exec simple-desktop --x-session
