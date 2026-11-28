@@ -13,6 +13,12 @@ if grep -qx 'theme=dark' /root/.config/simple-desktop/features 2>/dev/null; then
 	background='#161513'
 	foreground='#EAE6DD'
 fi
+
+if [ ! -s /etc/timezone ]; then
+	printf 'America/Chicago\n' >/etc/timezone
+	unlink /etc/localtime 2>/dev/null || :
+	ln -s /usr/share/zoneinfo/America/Chicago /etc/localtime
+fi
 export GTK_THEME="Adwaita:$theme"
 export QT_SCALE_FACTOR=1
 export QT_FONT_DPI=168

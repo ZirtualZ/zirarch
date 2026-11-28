@@ -1,9 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "gtk_shell_internal.h"
 #include "wifi.h"
 #include "../theme.h"
 
 #include <X11/Xlib.h>
 #include <errno.h>
+#include <dirent.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +14,7 @@
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 static void back_clicked(GtkButton *button, gpointer data)
 {
@@ -353,6 +357,235 @@ static GtkWidget *keyboard_page(void)
     return page;
 }
 
+static void read_timezone(char *zone, size_t size)
+{
+    FILE *file = fopen("/etc/timezone", "r");
+    if (file != NULL) {
+        if (fgets(zone, (int)size, file) != NULL) {
+            zone[strcspn(zone, "\r\n")] = '\0';
+        }
+        fclose(file);
+    }
+    if (zone[0] == '\0') {
+        snprintf(zone, size, "America/Chicago");
+        file = fopen("/etc/timezone", "w");
+        if (file != NULL) {
+            fprintf(file, "America/Chicago\n");
+            fclose(file);
+        }
+        symlink("/usr/share/zoneinfo/America/Chicago",
+                "/etc/localtime.tmp");
+        rename("/etc/localtime.tmp", "/etc/localtime");
+    }
+}
+
+static void timezone_apply(GtkButton *button, gpointer data)
+{
+    (void)data;
+    const char *zone = g_object_get_data(G_OBJECT(button), "timezone");
+    if (zone == NULL || zone[0] == '\0') return;
+    char source[1024];
+    snprintf(source, sizeof(source), "/usr/share/zoneinfo/%s", zone);
+    if (access(source, F_OK) != 0) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "This timezone is unavailable.");
+        return;
+    }
+    FILE *file = fopen("/etc/timezone", "w");
+    if (file == NULL) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "Could not update /etc/timezone.");
+        return;
+    }
+    fprintf(file, "%s\n", zone);
+    fclose(file);
+    char temporary[1024];
+    snprintf(temporary, sizeof(temporary), "/etc/localtime.fieldm-%ld",
+             (long)getpid());
+    unlink(temporary);
+    if (symlink(source, temporary) == 0)
+        rename(temporary, "/etc/localtime");
+    setenv("TZ", zone, 1);
+    tzset();
+}
+
+static void timezone_search_changed(GtkEditable *editable, gpointer data)
+{
+    GtkWidget *list = data;
+    const char *query = gtk_editable_get_text(editable);
+    char lower_query[128];
+    snprintf(lower_query, sizeof(lower_query), "%s", query);
+    for (char *p = lower_query; *p != '\0'; ++p)
+        *p = (char)g_ascii_tolower(*p);
+    for (GtkWidget *row = gtk_widget_get_first_child(list);
+         row != NULL;
+         row = gtk_widget_get_next_sibling(row)) {
+        const char *zone = g_object_get_data(G_OBJECT(row), "timezone");
+        char lower_zone[512];
+        snprintf(lower_zone, sizeof(lower_zone), "%s",
+                 zone != NULL ? zone : "");
+        for (char *p = lower_zone; *p != '\0'; ++p)
+            *p = (char)g_ascii_tolower(*p);
+        gtk_widget_set_visible(row,
+                               lower_query[0] == '\0' ||
+                               strstr(lower_zone, lower_query) != NULL);
+    }
+}
+
+static GtkWidget *date_time_page(void)
+{
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(page, 16);
+    gtk_widget_set_margin_end(page, 16);
+    gtk_widget_set_margin_top(page, 12);
+    gtk_box_append(GTK_BOX(page), heading("Date & time"));
+    char current[256] = "";
+    read_timezone(current, sizeof(current));
+    char current_text[320];
+    snprintf(current_text, sizeof(current_text),
+             "Timezone: %s", current);
+    gtk_box_append(GTK_BOX(page), gtk_label_new(current_text));
+    GtkWidget *search = gtk_search_entry_new();
+    gtk_box_append(GTK_BOX(page), search);
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scroll, TRUE);
+    GtkWidget *list = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_SINGLE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), list);
+    gtk_box_append(GTK_BOX(page), scroll);
+    g_signal_connect(search, "search-changed",
+                     G_CALLBACK(timezone_search_changed), list);
+    FILE *zone_tab = fopen("/usr/share/zoneinfo/zone.tab", "r");
+    GPtrArray *zones = g_ptr_array_new_with_free_func(g_free);
+    if (zone_tab != NULL) {
+        char line[512];
+        while (fgets(line, sizeof(line), zone_tab)) {
+            if (line[0] == '#' || line[0] == '\0') continue;
+            char **fields = g_strsplit(line, "\t", 4);
+            if (g_strv_length(fields) >= 3 && fields[2][0] != '\0') {
+                fields[2][strcspn(fields[2], "\r\n")] = '\0';
+                g_ptr_array_add(zones, g_strdup(fields[2]));
+            }
+            g_strfreev(fields);
+        }
+        fclose(zone_tab);
+    }
+    g_ptr_array_add(zones, g_strdup("America/Chicago"));
+    g_ptr_array_add(zones, g_strdup("America/New_York"));
+    g_ptr_array_add(zones, g_strdup("America/Denver"));
+    g_ptr_array_add(zones, g_strdup("America/Los_Angeles"));
+    g_ptr_array_add(zones, g_strdup("Europe/London"));
+    g_ptr_array_add(zones, g_strdup("Europe/Berlin"));
+    g_ptr_array_add(zones, g_strdup("Asia/Tokyo"));
+    g_ptr_array_add(zones, g_strdup("Australia/Sydney"));
+    g_ptr_array_add(zones, g_strdup("Etc/UTC"));
+    for (guint i = 0; i < zones->len; ++i) {
+        const char *zone = g_ptr_array_index(zones, i);
+        GtkWidget *button = gtk_button_new_with_label(zone);
+        gtk_widget_set_size_request(button, -1, 64);
+        g_object_set_data_full(G_OBJECT(button), "timezone",
+                               g_strdup(zone), g_free);
+        g_signal_connect(button, "clicked",
+                         G_CALLBACK(timezone_apply), NULL);
+        GtkWidget *row = gtk_list_box_row_new();
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), button);
+        g_object_set_data_full(G_OBJECT(row), "timezone",
+                               g_strdup(zone), g_free);
+        gtk_list_box_append(GTK_LIST_BOX(list), row);
+    }
+    g_ptr_array_free(zones, TRUE);
+    return page;
+}
+
+static void storage_format_sd_clicked(GtkButton *button, gpointer data)
+{
+    (void)data;
+    guint confirm = GPOINTER_TO_UINT(
+        g_object_get_data(G_OBJECT(button), "confirm"));
+    if (!confirm) {
+        g_object_set_data(G_OBJECT(button), "confirm",
+                          GUINT_TO_POINTER(1));
+        gtk_button_set_label(button,
+                             "Tap again to confirm microSD format");
+        return;
+    }
+    char *arguments[] = {
+        "/usr/bin/fieldm-storage", "format-sd", "--confirm", NULL
+    };
+    GError *error = NULL;
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, &error);
+    if (error != NULL) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "Could not format microSD.");
+        g_clear_error(&error);
+    }
+    g_object_set_data(G_OBJECT(button), "confirm",
+                      GUINT_TO_POINTER(0));
+}
+
+static void storage_use_sd_clicked(GtkButton *button, gpointer data)
+{
+    (void)data;
+    char *arguments[] = {
+        "/usr/bin/fieldm-storage", "use-sd", NULL
+    };
+    GError *error = NULL;
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, &error);
+    if (error != NULL) {
+        shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+                         "Could not use microSD.");
+        g_clear_error(&error);
+    }
+}
+
+static void storage_choose_internal(GtkButton *button, gpointer data)
+{
+    (void)data;
+    char path[1200];
+    const char *home = g_get_home_dir();
+    if (snprintf(path, sizeof(path),
+                 "%s/.config/fieldm/storage-location", home) >=
+            (int)sizeof(path)) return;
+    char directory[1200];
+    snprintf(directory, sizeof(directory),
+             "%s/.config/fieldm", home);
+    g_mkdir_with_parents(directory, 0700);
+    FILE *file = fopen(path, "w");
+    if (file != NULL) {
+        fprintf(file, "internal\n");
+        fclose(file);
+    }
+    gtk_button_set_label(button, "Internal storage selected");
+}
+
+static void storage_choose_sd(GtkButton *button, gpointer data)
+{
+    (void)data;
+    char *arguments[] = {
+        "/usr/bin/fieldm-storage", "use-sd", NULL
+    };
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+    char path[1200];
+    const char *home = g_get_home_dir();
+    if (snprintf(path, sizeof(path),
+                 "%s/.config/fieldm/storage-location", home) <
+            (int)sizeof(path)) {
+        char directory[1200];
+        snprintf(directory, sizeof(directory),
+                 "%s/.config/fieldm", home);
+        g_mkdir_with_parents(directory, 0700);
+        FILE *file = fopen(path, "w");
+        if (file != NULL) {
+            fprintf(file, "microsd\n");
+            fclose(file);
+        }
+    }
+    gtk_button_set_label(button, "microSD selected");
+}
+
 static GtkWidget *storage_page(void)
 {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
@@ -368,6 +601,62 @@ static GtkWidget *storage_page(void)
         snprintf(text, sizeof(text), "Root disk usage unavailable");
     }
     gtk_box_append(GTK_BOX(page), gtk_label_new(text));
+    if (statvfs("/data", &info) == 0 && info.f_blocks != 0) {
+        unsigned long long total = info.f_blocks * info.f_frsize;
+        unsigned long long used = (info.f_blocks - info.f_bfree) * info.f_frsize;
+        snprintf(text, sizeof(text), "Data: %llu MiB used of %llu MiB",
+                 used >> 20, total >> 20);
+        gtk_box_append(GTK_BOX(page), gtk_label_new(text));
+    } else {
+        gtk_box_append(GTK_BOX(page),
+                       gtk_label_new("Data: /data unavailable"));
+    }
+    char sd_status[256] = "microSD: not detected";
+    if (g_file_test("/dev/mmcblk1", G_FILE_TEST_EXISTS) ||
+        g_file_test("/dev/mmcblk1p1", G_FILE_TEST_EXISTS)) {
+        snprintf(sd_status, sizeof(sd_status),
+                 "microSD: detected");
+    }
+    gtk_box_append(GTK_BOX(page), gtk_label_new(sd_status));
+    GtkWidget *format_sd = gtk_button_new_with_label(
+        "Format microSD for Zirarch");
+    gtk_widget_set_size_request(format_sd, -1, 64);
+    gtk_widget_set_sensitive(format_sd,
+                             sd_status[9] == 'd');
+    g_object_set_data(G_OBJECT(format_sd), "confirm",
+                      GUINT_TO_POINTER(0));
+    g_signal_connect(format_sd, "clicked",
+                     G_CALLBACK(storage_format_sd_clicked), NULL);
+    gtk_box_append(GTK_BOX(page), format_sd);
+    GtkWidget *use_sd = gtk_button_new_with_label(
+        "Use microSD for apps & files");
+    gtk_widget_set_size_request(use_sd, -1, 64);
+    gtk_widget_set_sensitive(use_sd, sd_status[9] == 'd');
+    g_signal_connect(use_sd, "clicked",
+                     G_CALLBACK(storage_use_sd_clicked), NULL);
+    gtk_box_append(GTK_BOX(page), use_sd);
+    char marker[1200];
+    const char *home = g_get_home_dir();
+    if (snprintf(marker, sizeof(marker),
+                 "%s/.config/fieldm/storage-location", home) <
+            (int)sizeof(marker) &&
+        !g_file_test(marker, G_FILE_TEST_EXISTS)) {
+        gtk_box_append(GTK_BOX(page),
+                       heading("Store apps and files on"));
+        GtkWidget *choices = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *internal = gtk_button_new_with_label("Internal");
+        GtkWidget *microsd = gtk_button_new_with_label("microSD card");
+        gtk_widget_set_hexpand(internal, TRUE);
+        gtk_widget_set_hexpand(microsd, TRUE);
+        gtk_widget_set_sensitive(microsd, sd_status[9] == 'd');
+        g_signal_connect(internal, "clicked",
+                         G_CALLBACK(storage_choose_internal), NULL);
+        g_signal_connect(microsd, "clicked",
+                         G_CALLBACK(storage_choose_sd), NULL);
+        gtk_box_append(GTK_BOX(choices), internal);
+        gtk_box_append(GTK_BOX(choices), microsd);
+        gtk_box_append(GTK_BOX(page), choices);
+    }
     return page;
 }
 
@@ -930,8 +1219,13 @@ static gboolean update_clock_status(gpointer data)
         time_t now = time(NULL);
         struct tm local = {0};
         localtime_r(&now, &local);
-        char text[64];
+        char timezone[256] = "";
+        read_timezone(timezone, sizeof(timezone));
+        char text[96];
         strftime(text, sizeof(text), "Time: synced %H:%M", &local);
+        snprintf(text + strlen(text),
+                 sizeof(text) - strlen(text), " %s",
+                 timezone);
         gtk_label_set_text(GTK_LABEL(data), text);
     } else {
         gtk_label_set_text(GTK_LABEL(data), "Time: not synced");
@@ -1129,6 +1423,7 @@ void settings_open(ShellState *state)
         gtk_stack_add_named(stack, wifi_page_new(GTK_WINDOW(window)), "wifi");
         gtk_stack_add_named(stack, display_page(state), "display");
         gtk_stack_add_named(stack, keyboard_page(), "keyboard");
+        gtk_stack_add_named(stack, date_time_page(), "date-time");
         gtk_stack_add_named(stack, storage_page(), "storage");
         gtk_stack_add_named(stack, about_page(), "about");
         gtk_stack_add_named(stack, apps_page(state), "apps");
@@ -1138,6 +1433,7 @@ void settings_open(ShellState *state)
             "Wi-Fi - networks and connections",
             "Display - brightness and text size",
             "Keyboard - layout and typing behavior",
+            "Date & time - timezone",
             "Apps - installed apps and display size",
             "Storage - device storage",
             "Battery - charge and status",
@@ -1145,10 +1441,10 @@ void settings_open(ShellState *state)
             "About - device and system information"
         };
         const char *ids[] = {
-            "wifi", "display", "keyboard", "apps", "storage", "battery",
+            "wifi", "display", "keyboard", "date-time", "apps", "storage", "battery",
             "hardware", "about"
         };
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 9; ++i) {
             GtkWidget *button = row(names[i]);
             g_object_set_data(G_OBJECT(button), "section", (gpointer)ids[i]);
             g_signal_connect(button, "clicked", G_CALLBACK(open_section), stack);
