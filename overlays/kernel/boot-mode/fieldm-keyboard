@@ -58,13 +58,12 @@ sync_terminal_state()
 start_keyboard()
 {
 	rm -f "$pidfile"
-	exec 9>&-
 	if command -v fieldm-kbd >/dev/null 2>&1; then
-		fieldm-kbd &
+		fieldm-kbd 9>&- &
 	elif command -v svkbd-mobile-intl >/dev/null 2>&1; then
-		svkbd-mobile-intl -d -g 720x320+0+960 &
+		svkbd-mobile-intl -d -g 720x320+0+960 9>&- &
 	elif command -v svkbd >/dev/null 2>&1; then
-		svkbd -d -g 720x320+0+960 &
+		svkbd -d -g 720x320+0+960 9>&- &
 	else
 		echo "fieldm-keyboard: no keyboard installed" >&2
 		return 1
@@ -80,16 +79,6 @@ stop_keyboard()
 		kill "$pid" 2>/dev/null || :
 	fi
 	rm -f "$pidfile"
-	for proc in /proc/[0-9]*; do
-		pid=${proc#/proc/}
-		[ "$pid" = "$$" ] && continue
-		cmd=$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null) || continue
-		case "$cmd" in
-			*"fieldm-kbd"*|*"svkbd-mobile-intl"*|*"svkbd"*)
-				kill "$pid" 2>/dev/null || :
-				;;
-		esac
-	done
 }
 
 reconcile()
@@ -106,14 +95,21 @@ reconcile()
 }
 
 if [ "${1:-}" = warm ]; then
-	keyboard_pid && exit 0
-	start_keyboard || exit 0
+	if keyboard_pid; then
+		exec 9>&-
+		exit 0
+	fi
+	start_keyboard || {
+		exec 9>&-
+		exit 0
+	}
+	exec 9>&-
 	exit 0
 fi
 
 lease=${1:-manual}
 action=${2:-toggle}
-case "$lease" in manual|entry|terminal) ;; *) exit 1 ;; esac
+case "$lease" in manual|entry|terminal) ;; *) exec 9>&-; exit 1 ;; esac
 case "$action" in
 	on)
 		if [ "$lease" = manual ] || auto_show_enabled; then
@@ -125,12 +121,14 @@ case "$action" in
 		if [ "$lease" != manual ] && ! auto_show_enabled; then
 			rm -f "$state_dir/$lease"
 			reconcile
+			exec 9>&-
 			exit 0
 		fi
 		[ -e "$state_dir/$lease" ] &&
 			rm -f "$state_dir/$lease" ||
 			touch "$state_dir/$lease"
 		;;
-	*) exit 1 ;;
+	*) exec 9>&-; exit 1 ;;
 esac
 reconcile
+exec 9>&-
