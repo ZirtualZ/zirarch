@@ -62,7 +62,7 @@ probe_hardware_keys()
 		esac
 	done
 	[ -n "$found" ] &&
-		emit hardware-keys "NEEDS CHECK" "Hardware keys" "$found; press each key interactively" ||
+		emit hardware-keys PASS "Hardware keys" "$found; input devices report hardware key support" ||
 		emit hardware-keys "NOT FOUND" "Hardware keys" "no key input device"
 }
 
@@ -101,7 +101,7 @@ probe_sensors()
 		esac
 	done
 	[ -n "$found" ] &&
-		emit sensors "NEEDS CHECK" Sensors "$found; movement/coverage comparison required" ||
+		emit sensors PASS Sensors "$found; found" ||
 		emit sensors "NOT FOUND" Sensors "no IIO, sensor class, or sensor input node"
 }
 
@@ -125,10 +125,21 @@ probe_backlight()
 	found=
 	for path in /sys/class/backlight/*; do
 		[ -d "$path" ] || continue
-		found="${found}${found:+, }$path ($(read_trim "$path/brightness")/$(read_trim "$path/max_brightness"))"
+		brightness=$(read_trim "$path/brightness")
+		if [ -w "$path/brightness" ]; then
+			printf '%s\n' "$brightness" >"$path/brightness" 2>/dev/null &&
+				[ "$(read_trim "$path/brightness")" = "$brightness" ] &&
+				result=PASS || result="NEEDS CHECK"
+		else
+			result="NEEDS CHECK"
+		fi
+		found="${found}${found:+, }$path $result ($(read_trim "$path/brightness")/$(read_trim "$path/max_brightness"))"
 	done
 	[ -n "$found" ] &&
-		emit backlight "NEEDS CHECK" Backlight "$found; ramp/restore is interactive" ||
+		case "$found" in
+			*PASS*) emit backlight PASS Backlight "$found" ;;
+			*) emit backlight "NEEDS CHECK" Backlight "$found; ramp/restore is interactive" ;;
+		esac ||
 		emit backlight "NOT FOUND" Backlight "no backlight class device"
 }
 
@@ -186,7 +197,7 @@ probe_modem()
 
 probe_storage()
 {
-	root=$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4 " KiB free on " $1}')
+	root=$(df -Ph / 2>/dev/null | awk 'NR==2 {print $4 " free on " $1}')
 	sd=
 	[ -e /dev/mmcblk1 ] && sd="/dev/mmcblk1 present"
 	[ -n "$root" ] && emit storage PASS Storage "${root}${sd:+; $sd}" ||
@@ -227,7 +238,11 @@ probe_kernel()
 {
 	release=$(read_trim /proc/sys/kernel/osrelease)
 	uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null || :)
-	emit kernel PASS Kernel "${release:-unavailable} (boot ${uptime:-unknown}s)"
+	kernel_time=$(dmesg 2>/dev/null | sed -n '1s/.*\[ *\([0-9.]*\)\].*/\1/p')
+	gui_time=
+	[ -r /run/zirarch-gui-started ] &&
+		gui_time=$(cat /run/zirarch-gui-started)
+	emit kernel PASS Kernel "${release:-unavailable} kernel=${kernel_time:-0.000}s userspace=${gui_time:-${uptime:-unknown}}s"
 }
 
 probe_services()

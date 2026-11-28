@@ -487,7 +487,8 @@ static GtkWidget *battery_page(void)
     if (directory != NULL) {
         const char *entry;
         while ((entry = g_dir_read_name(directory)) != NULL) {
-            char path[512], type[64] = "", status[64] = "", capacity[32] = "";
+            char path[512], type[64] = "", status[64] = "",
+                 capacity[32] = "", voltage[32] = "", temperature[32] = "";
             snprintf(path, sizeof(path), "/sys/class/power_supply/%s/type", entry);
             FILE *file = fopen(path, "r");
             if (file == NULL) continue;
@@ -502,9 +503,19 @@ static GtkWidget *battery_page(void)
                      "/sys/class/power_supply/%s/status", entry);
             file = fopen(path, "r");
             if (file != NULL) { fgets(status, sizeof(status), file); fclose(file); }
-            char text[160];
-            snprintf(text, sizeof(text), "%s%% — %s",
-                     g_strstrip(capacity), g_strstrip(status));
+            snprintf(path, sizeof(path),
+                     "/sys/class/power_supply/%s/voltage_now", entry);
+            file = fopen(path, "r");
+            if (file != NULL) { fgets(voltage, sizeof(voltage), file); fclose(file); }
+            snprintf(path, sizeof(path),
+                     "/sys/class/power_supply/%s/temp", entry);
+            file = fopen(path, "r");
+            if (file != NULL) { fgets(temperature, sizeof(temperature), file); fclose(file); }
+            char text[320];
+            snprintf(text, sizeof(text),
+                     "%s%% — %s\nVoltage: %s uV\nTemperature: %s deci-C",
+                     g_strstrip(capacity), g_strstrip(status),
+                     g_strstrip(voltage), g_strstrip(temperature));
             gtk_box_append(GTK_BOX(page), gtk_label_new(text));
             found = TRUE;
         }
@@ -522,11 +533,11 @@ typedef struct {
     GSubprocess *process;
 } HardwarePageState;
 
-static void hardware_show_detail(GtkButton *button, gpointer data)
+static void hardware_show_detail(GtkWidget *widget, gpointer data)
 {
     (void)data;
-    const char *text = g_object_get_data(G_OBJECT(button), "detail");
-    shell_show_error(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(button))),
+    const char *text = g_object_get_data(G_OBJECT(widget), "detail");
+    shell_show_error(GTK_WINDOW(gtk_widget_get_root(widget)),
                      text != NULL ? text : "No details available.");
 }
 
@@ -549,9 +560,7 @@ static void hardware_set_result(HardwarePageState *state, const char *line)
                                                    "probe-status");
             GtkWidget *detail = g_object_get_data(G_OBJECT(item),
                                                    "probe-detail");
-            char *label = g_strdup_printf("%s — %s", fields[2], fields[1]);
-            gtk_label_set_text(GTK_LABEL(status), label);
-            g_free(label);
+            gtk_label_set_text(GTK_LABEL(status), fields[1]);
             g_object_set_data_full(G_OBJECT(detail), "detail",
                                    g_strdup(fields[3]), g_free);
         }
@@ -663,6 +672,14 @@ static void hardware_page_destroyed(GtkWidget *widget, gpointer data)
     (void)widget;
 }
 
+static void hardware_row_activated(GtkListBox *list, GtkListBoxRow *row,
+                                   gpointer data)
+{
+    (void)list;
+    if (row == NULL) return;
+    hardware_show_detail(GTK_WIDGET(row), data);
+}
+
 static GtkWidget *hardware_page(void)
 {
     static const struct {
@@ -706,32 +723,34 @@ static GtkWidget *hardware_page(void)
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_widget_set_vexpand(scroll, TRUE);
     state->list = gtk_list_box_new();
+    g_signal_connect(state->list, "row-activated",
+                     G_CALLBACK(hardware_row_activated), state);
     for (size_t i = 0; i < G_N_ELEMENTS(probes); ++i) {
         GtkWidget *item = gtk_list_box_row_new();
         GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        gtk_widget_set_hexpand(text, TRUE);
+        GtkWidget *name = gtk_label_new(probes[i].name);
+        gtk_label_set_xalign(GTK_LABEL(name), 0.0f);
         GtkWidget *status = gtk_label_new("NEEDS CHECK");
         gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
-        gtk_widget_set_hexpand(status, TRUE);
-        char *text = g_strdup_printf("%s — not run", probes[i].name);
-        gtk_label_set_text(GTK_LABEL(status), text);
-        g_free(text);
+        gtk_label_set_markup(GTK_LABEL(status),
+                             "<b>not run</b>");
+        gtk_box_append(GTK_BOX(text), name);
+        gtk_box_append(GTK_BOX(text), status);
         GtkWidget *test = gtk_button_new_with_label("Test");
-        GtkWidget *detail = gtk_button_new_with_label("Details");
         g_object_set_data_full(G_OBJECT(item), "probe-id",
                                g_strdup(probes[i].id), g_free);
         g_object_set_data(G_OBJECT(item), "probe-status", status);
-        g_object_set_data(G_OBJECT(item), "probe-detail", detail);
+        g_object_set_data(G_OBJECT(item), "probe-detail", item);
         g_object_set_data_full(G_OBJECT(test), "probe-id",
                                g_strdup(probes[i].id), g_free);
-        g_object_set_data_full(G_OBJECT(detail), "detail",
+        g_object_set_data_full(G_OBJECT(item), "detail",
                                g_strdup("Run this probe to collect details."),
                                g_free);
         g_signal_connect(test, "clicked", G_CALLBACK(hardware_run_one), state);
-        g_signal_connect(detail, "clicked", G_CALLBACK(hardware_show_detail),
-                         state);
-        gtk_box_append(GTK_BOX(line), status);
+        gtk_box_append(GTK_BOX(line), text);
         gtk_box_append(GTK_BOX(line), test);
-        gtk_box_append(GTK_BOX(line), detail);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(item), line);
         gtk_list_box_append(GTK_LIST_BOX(state->list), item);
     }

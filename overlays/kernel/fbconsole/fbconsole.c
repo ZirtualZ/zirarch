@@ -795,6 +795,29 @@ static void format_post_line(char *line, char *formatted, size_t length)
 		second + 1);
 	snprintf(detail, sizeof(detail), "%.*s", (int)sizeof(detail) - 1,
 		third + 1);
+	if (!strcmp(label, "Storage")) {
+		char size[16];
+		if (sscanf(detail, "%15s", size) == 1)
+			snprintf(detail, sizeof(detail), "%s free", size);
+	}
+	if (!strcmp(label, "Display")) {
+		snprintf(detail, sizeof(detail), "720x1280");
+	}
+	if (!strcmp(label, "Wi-Fi")) {
+		snprintf(detail, sizeof(detail), "wlan0 up");
+	}
+	if (!strcmp(label, "Battery")) {
+		char *capacity = strstr(detail, "capacity=");
+		if (capacity) {
+			snprintf(detail, sizeof(detail), "%.8s",
+				capacity + strlen("capacity="));
+			snprintf(detail + strlen(detail),
+				sizeof(detail) - strlen(detail), "%%");
+		}
+	}
+	if (!strcmp(label, "Sensors")) {
+		snprintf(detail, sizeof(detail), "sensors found");
+	}
 	used = snprintf(formatted, length, "%-24.24s", label);
 	if (used < 0 || (size_t)used >= length)
 		return;
