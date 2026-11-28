@@ -561,11 +561,22 @@ static void recents_switch(GtkListBox *list, GtkListBoxRow *row, gpointer data)
     if (frame != None) {
         Window root_return, parent_return, *children = NULL;
         unsigned int count = 0;
-        XRaiseWindow(state->xdisplay, frame);
         if (XQueryTree(state->xdisplay, frame, &root_return, &parent_return,
                        &children, &count) && count > 0) {
-            XSetInputFocus(state->xdisplay, children[0],
-                           RevertToPointerRoot, CurrentTime);
+            XEvent message;
+            memset(&message, 0, sizeof(message));
+            message.xclient.type = ClientMessage;
+            message.xclient.window = children[0];
+            message.xclient.message_type =
+                XInternAtom(state->xdisplay, "_NET_ACTIVE_WINDOW", False);
+            message.xclient.format = 32;
+            message.xclient.data.l[0] = 1;
+            message.xclient.data.l[1] = CurrentTime;
+            XSendEvent(state->xdisplay,
+                       DefaultRootWindow(state->xdisplay), False,
+                       SubstructureRedirectMask | SubstructureNotifyMask,
+                       (XEvent *)&message);
+            XFlush(state->xdisplay);
         }
         if (children != NULL) XFree(children);
         XFlush(state->xdisplay);

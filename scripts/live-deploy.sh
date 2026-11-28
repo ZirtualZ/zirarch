@@ -82,25 +82,20 @@ scp_file()
 ssh_untar_and_build()
 {
 	ssh_run mkdir -p "$REMOTE_ROOT/build/FieldM"
-	if [ -n "$SSH_KEY" ]; then
-		tar -C "$ROOT/FieldM" --exclude='*.armv7' -cf - Makefile src data tests |
-			ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
-				-o UserKnownHostsFile=/tmp/zirarch-known-hosts \
-				-i "$SSH_KEY" -o IdentitiesOnly=yes "$TARGET" \
-				tar -C "$REMOTE_ROOT/build/FieldM" -xf -
-	elif [ -r "$HOME/.ssh/zirarch_ed25519" ]; then
-		tar -C "$ROOT/FieldM" --exclude='*.armv7' -cf - Makefile src data tests |
-			ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
-				-o UserKnownHostsFile=/tmp/zirarch-known-hosts \
-				-i "$HOME/.ssh/zirarch_ed25519" -o IdentitiesOnly=yes "$TARGET" \
-				tar -C "$REMOTE_ROOT/build/FieldM" -xf -
-	else
-		tar -C "$ROOT/FieldM" --exclude='*.armv7' -cf - Makefile src data tests |
-			ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
-				-o UserKnownHostsFile=/tmp/zirarch-known-hosts "$TARGET" \
-				tar -C "$REMOTE_ROOT/build/FieldM" -xf -
-	fi
-	ssh_run sh -c "cd '$REMOTE_ROOT/build/FieldM' && make clean && make -j1 all"
+	source_archive=/tmp/zirarch-fieldm-source.tar
+	tar -C "$ROOT/FieldM" --exclude='*.armv7' -cf "$source_archive" \
+		Makefile src data tests
+	scp_file "$source_archive" "$REMOTE_ROOT/FieldM-source.tar"
+	ssh_run sh -c "set -e
+		rm -rf '$REMOTE_ROOT/build/FieldM'
+		mkdir -p '$REMOTE_ROOT/build/FieldM'
+		tar -C '$REMOTE_ROOT/build/FieldM' -xf '$REMOTE_ROOT/FieldM-source.tar'
+		test -f '$REMOTE_ROOT/build/FieldM/Makefile'
+		cd '$REMOTE_ROOT/build/FieldM'
+		make clean
+		make -j1 all
+	"
+	rm -f "$source_archive"
 }
 
 rollback()
@@ -282,10 +277,7 @@ $row
 EOF
 	[ -n "$name" ] || continue
 	target_sum=$(ssh_run sha256sum "$destination" 2>/dev/null | awk '{print $1}')
-	case "$source" in
-		remote:*) host_sum=$(ssh_run sha256sum "${source#remote:}" 2>/dev/null | awk '{print $1}') ;;
-		*) host_sum=$(sha256_file "$source") ;;
-	esac
+	host_sum=$(awk -v name="$name" '$1=="host_sha256" && $2==name {print $4}' "$HOST_MANIFEST")
 	if [ -z "$target_sum" ] || [ "$target_sum" != "$host_sum" ]; then
 		echo "live-deploy: checksum mismatch after deploy: $destination" >&2
 		exit 1

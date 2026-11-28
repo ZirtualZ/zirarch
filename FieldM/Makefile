@@ -11,7 +11,7 @@ BINDIR ?= $(PREFIX)/bin
 XSESSIONDIR ?= /usr/share/xsessions
 DESTDIR ?=
 
-.PHONY: all clean install check-gtk check-applications
+.PHONY: all clean install check-gtk check-applications check-wm
 
 all: simple-desktop simple-wm fieldm-packages fieldm-keys fieldm-kbd
 
@@ -39,6 +39,9 @@ check-gtk:
 
 check-applications:
 	sh ./tests/check-applications.sh
+
+check-wm:
+	sh ./tests/check-wm.sh
 
 simple-desktop: $(DESKTOP_SOURCES) $(DESKTOP_HEADERS) | check-gtk
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -std=c11 -o $@ $(DESKTOP_SOURCES) \

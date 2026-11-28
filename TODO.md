@@ -233,6 +233,11 @@ window invisible.
 **Acceptance:** opening windows cannot leave a successfully mapped X client
 stranded and memory remains bounded over repeated open/close cycles.
 
+**Status:** Implemented dynamic managed-client and pending-close
+collections with growth, shrink, and allocation/rejection paths. Live
+SM-G550T deployment and source invariant checks pass; open/close stress beyond
+128 windows remains to be tested.
+
 ## Step 2.2: Centralize managed-window invariants
 
 Create named WM helpers for:
@@ -252,6 +257,9 @@ Then reduce direct state mutation spread through `manage_window`,
 
 **Acceptance:** geometry and focus transitions remain correct after an app
 fullscreen toggle, keyboard resize, screen configure, close, or recents action.
+
+**Status:** Partial. Named geometry, work-area, fullscreen, and keyboard
+clamping helpers are being consolidated; rapid live geometry/focus tests remain.
 
 ## Step 2.3: Implement close as a durable protocol
 
@@ -273,6 +281,9 @@ Test Terminal, htop, BTOP++, plain Xterm, a dialog, and an app that ignores
 **Acceptance:** close works for supporting and non-supporting apps, Clear all
 closes every real app, and no WM pending-close entry survives forever.
 
+**Status:** Partial. `_NET_CLOSE_WINDOW`, `WM_DELETE_WINDOW`, pending deadlines,
+and `XKillClient` fallback are implemented; live protocol tests remain.
+
 ## Step 2.4: Remove title bars and chrome correctly
 
 - Implement fullscreen by removing both border and title decorations.
@@ -284,6 +295,9 @@ closes every real app, and no WM pending-close entry survives forever.
 
 **Acceptance:** fullscreen terminal/video/app content reaches the physical
 screen edge and normal windows remain distinguishable and closeable.
+
+**Status:** Partial. Fullscreen and normal frame state are implemented; live
+fullscreen/chrome verification remains.
 
 ## Step 2.5: Improve geometry and struts
 
@@ -300,6 +314,9 @@ screen edge and normal windows remain distinguishable and closeable.
 off-screen, and taskbar/status geometry survives rotation-independent 720x1280
 changes.
 
+**Status:** Partial. `_NET_WORKAREA`, keyboard-aware work area, and clamp
+helpers are implemented; live 720x1280/keyboard relayout tests remain.
+
 ## Step 2.6: Repair focus and switcher behavior
 
 - focus exactly one managed client;
@@ -312,6 +329,9 @@ changes.
 
 **Acceptance:** no close/focus action targets the wrong window after 100 open,
 switch, and close operations.
+
+**Status:** Partial. Focus indices are repaired on destroy and Recents uses
+`_NET_ACTIVE_WINDOW`; rapid 100-action stress remains.
 
 ---
 

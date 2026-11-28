@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -21,7 +22,6 @@
 #include "theme.h"
 
 enum {
-    MAX_CLIENTS = 128,
     TITLE_HEIGHT = FIELD_M_CLOSE_SIZE,
     MIN_WIDTH = 240,
     MIN_HEIGHT = 140,
@@ -55,8 +55,11 @@ typedef struct {
 
 static Display *display;
 static Window root;
-static ManagedWindow clients[MAX_CLIENTS];
-static PendingClose pending_closes[MAX_CLIENTS];
+static ManagedWindow *clients;
+static size_t client_capacity;
+static PendingClose *pending_closes;
+static size_t pending_close_capacity;
+static size_t pending_close_count;
 static int client_count;
 static int focused = -1;
 static unsigned long frame_color;
@@ -109,6 +112,95 @@ static unsigned long long monotonic_ms(void)
            (unsigned long long)now.tv_nsec / 1000000ULL;
 }
 
+static int ensure_client_capacity(void)
+{
+    if ((size_t)client_count < client_capacity) {
+        return 1;
+    }
+    if (client_capacity > SIZE_MAX / 2) {
+        fprintf(stderr,
+                "simple-wm: managed-window capacity limit reached\n");
+        return 0;
+    }
+    size_t next_capacity = client_capacity == 0 ? 128 : client_capacity * 2;
+    ManagedWindow *next = realloc(
+        clients, next_capacity * sizeof(*next));
+    if (next == NULL) {
+        fprintf(stderr,
+                "simple-wm: cannot grow managed-window storage to %zu clients\n",
+                next_capacity);
+        return 0;
+    }
+    clients = next;
+    client_capacity = next_capacity;
+    return 1;
+}
+
+static void shrink_client_capacity(void)
+{
+    if (client_capacity <= 128 ||
+        (size_t)client_count >= client_capacity / 2) {
+        return;
+    }
+    size_t next_capacity = client_capacity / 2;
+    if (next_capacity < 128) {
+        next_capacity = 128;
+    }
+    ManagedWindow *next = realloc(
+        clients, next_capacity * sizeof(*next));
+    if (next != NULL) {
+        clients = next;
+        client_capacity = next_capacity;
+    }
+}
+
+static int ensure_pending_close_capacity(void)
+{
+    if (pending_close_count < pending_close_capacity) {
+        return 1;
+    }
+    if (pending_close_capacity > SIZE_MAX / 2) {
+        fprintf(stderr,
+                "simple-wm: pending-close capacity limit reached\n");
+        return 0;
+    }
+    size_t next_capacity = pending_close_capacity == 0
+        ? 128 : pending_close_capacity * 2;
+    PendingClose *next = realloc(
+        pending_closes, next_capacity * sizeof(*next));
+    if (next == NULL) {
+        fprintf(stderr,
+                "simple-wm: cannot grow pending-close storage to %zu entries\n",
+                next_capacity);
+        return 0;
+    }
+    for (size_t i = pending_close_capacity; i < next_capacity; ++i) {
+        next[i].client = None;
+        next[i].deadline = 0;
+    }
+    pending_closes = next;
+    pending_close_capacity = next_capacity;
+    return 1;
+}
+
+static void shrink_pending_close_capacity(void)
+{
+    if (pending_close_capacity <= 128 ||
+        pending_close_count >= pending_close_capacity / 2) {
+        return;
+    }
+    size_t next_capacity = pending_close_capacity / 2;
+    if (next_capacity < 128) {
+        next_capacity = 128;
+    }
+    PendingClose *next = realloc(
+        pending_closes, next_capacity * sizeof(*next));
+    if (next != NULL) {
+        pending_closes = next;
+        pending_close_capacity = next_capacity;
+    }
+}
+
 static void update_frame_title(int index)
 {
     if (index < 0 || index >= client_count) return;
@@ -137,6 +229,30 @@ static void raise_keyboard_window(void)
     if (keyboard_window != None) {
         XRaiseWindow(display, keyboard_window);
     }
+}
+
+static void publish_workarea(void)
+{
+    int height = screen_layout.height;
+    if (keyboard_window != None && focused >= 0 &&
+        focused < client_count &&
+        clients[focused].terminal) {
+        height -= keyboard_height;
+    }
+    if (height < 1) {
+        height = 1;
+    }
+    unsigned long workarea[4] = {
+        (unsigned long)screen_layout.x,
+        (unsigned long)screen_layout.y,
+        (unsigned long)screen_layout.width,
+        (unsigned long)height
+    };
+    XChangeProperty(display, root,
+                    XInternAtom(display, "_NET_WORKAREA", False),
+                    XA_CARDINAL, 32, PropModeReplace,
+                    (unsigned char *)workarea, 4);
+    XFlush(display);
 }
 
 static int text_matches_terminal(const char *text)
@@ -272,6 +388,7 @@ static void place_keyboard_window(Window window, int requested_height)
         focused >= 0) {
         maximize_client(focused, clients[focused].fullscreen);
     }
+    publish_workarea();
     XFlush(display);
 }
 
@@ -614,6 +731,7 @@ static void focus_client(int index)
         XUnmapWindow(display, taskbar_window);
     }
     raise_keyboard_window();
+    publish_workarea();
 }
 
 static void maximize_client(int index, int fullscreen)
@@ -663,9 +781,58 @@ static void maximize_client(int index, int fullscreen)
     raise_keyboard_window();
 }
 
+static void clamp_managed_geometry(int index)
+{
+    if (index < 0 || index >= client_count) {
+        return;
+    }
+    ManagedWindow *managed = &clients[index];
+    int title = title_height(managed);
+    int border = border_width(managed);
+    int usable_width = screen_layout.width - border;
+    int usable_height = screen_layout.height - title - border;
+    if (keyboard_window != None && focused == index) {
+        usable_height -= keyboard_height;
+    }
+    if (usable_width < MIN_WIDTH) {
+        usable_width = MIN_WIDTH;
+    }
+    if (usable_height < MIN_HEIGHT) {
+        usable_height = MIN_HEIGHT;
+    }
+    if (managed->width < 1) {
+        managed->width = 1;
+    }
+    if (managed->width > usable_width) {
+        managed->width = usable_width;
+    }
+    if (managed->height < 1) {
+        managed->height = 1;
+    }
+    if (managed->height > usable_height) {
+        managed->height = usable_height;
+    }
+    int max_x = screen_layout.x + screen_layout.width -
+                managed->width - border;
+    int max_y = screen_layout.y + usable_height - managed->height;
+    if (managed->x < screen_layout.x) {
+        managed->x = screen_layout.x;
+    }
+    if (managed->x > max_x) {
+        managed->x = max_x;
+    }
+    if (managed->y < screen_layout.y) {
+        managed->y = screen_layout.y;
+    }
+    if (managed->y > max_y) {
+        managed->y = max_y;
+    }
+}
+
 static void arrange_client(int index)
 {
     ManagedWindow *managed = &clients[index];
+    clamp_managed_geometry(index);
     int title = title_height(managed);
     int border = border_width(managed);
     XMoveResizeWindow(display, managed->frame, managed->x, managed->y,
@@ -693,7 +860,11 @@ static void manage_window(Window client)
         place_keyboard_window(client, -1);
         return;
     }
-    if (client_count >= MAX_CLIENTS) {
+    if (!ensure_client_capacity()) {
+        fprintf(stderr,
+                "simple-wm: rejecting mapped client 0x%lx after allocation failure\n",
+                client);
+        XKillClient(display, client);
         return;
     }
 
@@ -749,6 +920,15 @@ static void manage_window(Window client)
                                    1, CopyFromParent, InputOutput, CopyFromParent,
                                    CWOverrideRedirect | CWBackPixel | CWEventMask,
                                    &frame_attributes);
+    if (managed->frame == None) {
+        fprintf(stderr,
+                "simple-wm: rejecting client 0x%lx because frame creation failed\n",
+                client);
+        XKillClient(display, client);
+        --client_count;
+        shrink_client_capacity();
+        return;
+    }
 
     XAddToSaveSet(display, client);
     XSelectInput(display, client, StructureNotifyMask | PropertyChangeMask);
@@ -796,6 +976,7 @@ static void forget_client(int index)
         focused = -1;
         XSetInputFocus(display, root, RevertToPointerRoot, CurrentTime);
     }
+    shrink_client_capacity();
     draw_taskbar();
 }
 
@@ -815,39 +996,43 @@ static void unmanage_client(int index)
 
 static void cancel_pending_close(Window client)
 {
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
+    for (size_t i = 0; i < pending_close_count;) {
         if (pending_closes[i].client == client) {
-            pending_closes[i].client = None;
-            pending_closes[i].deadline = 0;
+            for (size_t j = i + 1; j < pending_close_count; ++j) {
+                pending_closes[j - 1] = pending_closes[j];
+            }
+            --pending_close_count;
+            pending_closes[pending_close_count].client = None;
+            pending_closes[pending_close_count].deadline = 0;
+        } else {
+            ++i;
         }
     }
+    shrink_pending_close_capacity();
 }
 
 static void schedule_pending_close(Window client)
 {
-    int available = -1;
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
+    for (size_t i = 0; i < pending_close_count; ++i) {
         if (pending_closes[i].client == client) {
-            available = i;
-            break;
-        }
-        if (available < 0 && pending_closes[i].client == None) {
-            available = i;
+            pending_closes[i].deadline = monotonic_ms() + 3000;
+            return;
         }
     }
-    if (available < 0) {
+    if (!ensure_pending_close_capacity()) {
         XKillClient(display, client);
         return;
     }
-    pending_closes[available].client = client;
-    pending_closes[available].deadline = monotonic_ms() + 3000;
+    pending_closes[pending_close_count].client = client;
+    pending_closes[pending_close_count].deadline = monotonic_ms() + 3000;
+    ++pending_close_count;
 }
 
 static int pending_close_timeout(void)
 {
     unsigned long long now = monotonic_ms();
     unsigned long long earliest = 0;
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
+    for (size_t i = 0; i < pending_close_count; ++i) {
         if (pending_closes[i].client == None) continue;
         if (earliest == 0 || pending_closes[i].deadline < earliest) {
             earliest = pending_closes[i].deadline;
@@ -862,14 +1047,13 @@ static int pending_close_timeout(void)
 static void expire_pending_closes(void)
 {
     unsigned long long now = monotonic_ms();
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
+    for (size_t i = 0; i < pending_close_count;) {
         if (pending_closes[i].client == None ||
             pending_closes[i].deadline > now) {
+            ++i;
             continue;
         }
         Window client = pending_closes[i].client;
-        pending_closes[i].client = None;
-        pending_closes[i].deadline = 0;
         int index = find_client(client);
         XWindowAttributes attributes;
         if (index >= 0 && clients[index].client == client &&
@@ -878,7 +1062,14 @@ static void expire_pending_closes(void)
                     client);
             XKillClient(display, client);
         }
+        for (size_t j = i + 1; j < pending_close_count; ++j) {
+            pending_closes[j - 1] = pending_closes[j];
+        }
+        --pending_close_count;
+        pending_closes[pending_close_count].client = None;
+        pending_closes[pending_close_count].deadline = 0;
     }
+    shrink_pending_close_capacity();
 }
 
 static void close_client(int index)
@@ -996,6 +1187,7 @@ static void sync_taskbars(void)
                     XInternAtom(display, "_NET_WORKAREA", False),
                     XA_CARDINAL, 32, PropModeReplace,
                     (unsigned char *)workarea, 4);
+    publish_workarea();
     XSetWindowAttributes attributes;
     attributes.override_redirect = True;
     attributes.background_pixel = switcher_color;
@@ -1382,6 +1574,7 @@ int main(int argc, char **argv)
                     XSetInputFocus(display, root, RevertToPointerRoot,
                                    CurrentTime);
                     draw_taskbar();
+                    publish_workarea();
                 } else if (command == 4) {
                     if (switcher_window != None) {
                         close_switcher();
@@ -1447,6 +1640,7 @@ int main(int argc, char **argv)
                 if (focused >= 0) {
                     maximize_client(focused, clients[focused].fullscreen);
                 }
+                publish_workarea();
                 continue;
             }
             int index = find_client(event.xunmap.window);
@@ -1466,6 +1660,7 @@ int main(int argc, char **argv)
                 if (focused >= 0) {
                     maximize_client(focused, clients[focused].fullscreen);
                 }
+                publish_workarea();
                 continue;
             }
             int index = find_client(event.xdestroywindow.window);
@@ -1706,7 +1901,8 @@ int main(int argc, char **argv)
             } else if (event.xkey.keycode == XKeysymToKeycode(display, XK_Tab) &&
                        client_count > 0) {
                 int direction = (event.xkey.state & ShiftMask) != 0 ? -1 : 1;
-                int next = (focused + direction + client_count) % client_count;
+                int base = focused >= 0 ? focused : 0;
+                int next = (base + direction + client_count) % client_count;
                 focus_client(next);
                 show_switcher();
             } else if (event.xkey.keycode ==

@@ -24,6 +24,7 @@ make -C "$ROOT/kernel" \
 make -C "$ROOT/FieldM" clean
 make -C "$ROOT/FieldM" -j"$JOBS"
 make -C "$ROOT/FieldM" check-applications
+make -C "$ROOT/FieldM" check-wm
 
 "$ROOT/kernel/build-on5-fbconsole.sh"
 
