@@ -53,6 +53,7 @@ static int screen_blanked;
 static int touchscreen_grabbed;
 static int power_held;
 static int volume_up_held;
+static int volume_down_held;
 static int combo_seen;
 static int combo_triggered;
 static int power_suppressed;
@@ -199,8 +200,27 @@ static void toggle_power(void)
         write_integer_file(fb_path, 1);
         screen_blanked = 1;
         set_touchscreen_grab(1);
+        pid_t lock = fork();
+        if (lock == 0) {
+            execl("/usr/bin/fieldm-lock", "fieldm-lock", (char *)NULL);
+            _exit(127);
+        }
+        FILE *pid = fopen("/run/fieldm-lock.pid", "w");
+        if (pid != NULL) {
+            fprintf(pid, "%ld\n", (long)lock);
+            fclose(pid);
+        }
         log_message("screen blanked");
     } else {
+        FILE *pid = fopen("/run/fieldm-lock.pid", "r");
+        pid_t lock = 0;
+        if (pid != NULL) {
+            fscanf(pid, "%d", &lock);
+            fclose(pid);
+        }
+        if (lock > 1) kill(lock, SIGTERM);
+        unlink("/run/fieldm-lock.pid");
+        unlink("/run/fieldm-unlock-request");
         set_touchscreen_grab(0);
         int brightness = read_integer_file(state_path, 134);
         write_integer_file(fb_path, 0);
@@ -553,6 +573,15 @@ static void set_volume(int direction)
         execv(arguments[0], arguments);
         _exit(127);
     }
+    if (child > 0) {
+        pid_t notice = fork();
+        if (notice == 0) {
+            execl("/usr/bin/fieldm-notify", "fieldm-notify",
+                  direction > 0 ? "Volume up" : "Volume down",
+                  (char *)NULL);
+            _exit(127);
+        }
+    }
 }
 
 static int other_hardware_key_held(void)
@@ -570,7 +599,7 @@ static int other_hardware_key_held(void)
 
 static void reset_combo_if_released(void)
 {
-    if (!power_held && !volume_up_held) {
+    if (!power_held && !volume_up_held && !volume_down_held) {
         combo_seen = 0;
         combo_triggered = 0;
         power_suppressed = 0;
@@ -854,6 +883,41 @@ static void restart_gui_session(void)
     }
 }
 
+static void take_screenshot(void)
+{
+    time_t now = time(NULL);
+    struct tm local;
+    char directory[128], path[512];
+    localtime_r(&now, &local);
+    mkdir("/root/Pictures", 0700);
+    strftime(directory, sizeof(directory), "/root/Pictures/screenshot-%Y%m%d-%H%M%S.png",
+             &local);
+    snprintf(path, sizeof(path), "%s", directory);
+    pid_t child = fork();
+    if (child == 0) {
+        setenv("DISPLAY", ":0", 1);
+        execl("/usr/bin/scrot", "scrot", path, (char *)NULL);
+        execl("/bin/scrot", "scrot", path, (char *)NULL);
+        _exit(127);
+    }
+    pid_t flash = fork();
+    if (flash == 0) {
+        setenv("DISPLAY", ":0", 1);
+        execl("/usr/bin/xsetroot", "xsetroot", "-solid", "#FFFFFF",
+              (char *)NULL);
+        _exit(127);
+    }
+    sleep_ms(80);
+    flash = fork();
+    if (flash == 0) {
+        setenv("DISPLAY", ":0", 1);
+        execl("/usr/bin/xsetroot", "xsetroot", "-solid", "#161513",
+              (char *)NULL);
+        _exit(127);
+    }
+    log_message("action=screenshot path=%s", path);
+}
+
 static void update_key_state(int device, unsigned int code, int value,
                              unsigned long long now)
 {
@@ -897,6 +961,12 @@ static void update_key_state(int device, unsigned int code, int value,
                 combo_started_at = now;
                 power_suppressed = 1;
                 volume_up_suppressed = 1;
+            }
+            if (volume_down_held) {
+                combo_seen = 1;
+                combo_started_at = now;
+                power_suppressed = 1;
+                take_screenshot();
             }
         } else if (value == 0 && power_held) {
             power_held = 0;
@@ -958,9 +1028,25 @@ static void update_key_state(int device, unsigned int code, int value,
                 code == KEY_APPSELECT_SAMSUNG)) {
         send_command_in_child(CMD_RECENTS);
         action = "recents-open";
-    } else if (value == 1 && code == KEY_VOLUMEDOWN) {
-        set_volume(-1);
-        action = "volume-down";
+    } else if (code == KEY_VOLUMEDOWN) {
+        if (value == 1 && is_new_press) {
+            volume_down_held = 1;
+            if (power_held) {
+                combo_seen = 1;
+                combo_started_at = now;
+                power_suppressed = 1;
+                take_screenshot();
+            }
+        } else if (value == 0 && volume_down_held) {
+            volume_down_held = 0;
+            if (!combo_seen && !power_held) {
+                set_volume(-1);
+                action = "volume-down";
+            } else {
+                action = "volume-down-suppressed";
+            }
+            reset_combo_if_released();
+        }
     }
     log_message("key event device=%d code=%u value=%d action=%s",
             device, code, value, action);
@@ -1114,6 +1200,13 @@ int main(void)
     unsigned long long refresh_deadline = monotonic_ms() + 1000;
     for (;;) {
         reap_children();
+        if (screen_blanked &&
+            access("/run/fieldm-unlock-request", F_OK) == 0) {
+            unlink("/run/fieldm-unlock-request");
+            toggle_power();
+            send_command_in_child(CMD_HOME);
+            log_message("lock-screen action=unlocked");
+        }
         for (int i = 0; i < input_device_count; ++i) {
             polls[i].fd = input_devices[i].fd;
             polls[i].events = POLLIN;

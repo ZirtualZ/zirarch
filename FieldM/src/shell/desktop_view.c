@@ -3,7 +3,9 @@
 
 #include <gdk/x11/gdkx.h>
 #include <X11/Xatom.h>
+#include <signal.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 
 void desktop_view_center_window(ShellState *state, GtkWidget *window,
@@ -520,6 +522,24 @@ static gboolean recents_kill_after_timeout(gpointer data)
     XWindowAttributes attributes;
     if (XGetWindowAttributes(display, client, &attributes) &&
         attributes.map_state != IsUnmapped) {
+        Atom pid_atom = XInternAtom(display, "_NET_WM_PID", False);
+        Atom actual_type;
+        int actual_format;
+        unsigned long count, bytes_after;
+        unsigned char *value = NULL;
+        if (XGetWindowProperty(display, client, pid_atom, 0, 1, False,
+                               XA_CARDINAL, &actual_type, &actual_format,
+                               &count, &bytes_after, &value) == Success &&
+            value != NULL && actual_type == XA_CARDINAL &&
+            actual_format == 32 && count == 1) {
+            pid_t pid = (pid_t)((unsigned long *)value)[0];
+            if (pid > 1) {
+                kill(pid, SIGTERM);
+            }
+            XFree(value);
+        } else if (value != NULL) {
+            XFree(value);
+        }
         XKillClient(display, client);
         XFlush(display);
     }
@@ -548,7 +568,7 @@ static int recents_request_close(ShellState *state, Window frame)
     XSendEvent(display, DefaultRootWindow(display), False,
                SubstructureRedirectMask | SubstructureNotifyMask, &event);
     XFlush(display);
-    g_timeout_add(3000, recents_kill_after_timeout,
+    g_timeout_add(2000, recents_kill_after_timeout,
                   GUINT_TO_POINTER((guint)client));
     (void)state;
     return 1;
@@ -741,6 +761,7 @@ void recents_open(ShellState *state)
     while ((child = gtk_widget_get_first_child(list)) != NULL) {
         gtk_list_box_remove(GTK_LIST_BOX(list), child);
     }
+    int recents_count = 0;
     Atom client_list_atom =
         XInternAtom(state->xdisplay, "_NET_CLIENT_LIST", False);
     Atom actual_type;
@@ -780,51 +801,76 @@ void recents_open(ShellState *state)
             }
             continue;
         }
-        char *name = NULL;
-        XFetchName(state->xdisplay, client, &name);
-        if (name != NULL) {
-            g_strstrip(name);
-            if (name[0] == '\0') {
-                XFree(name);
-                name = NULL;
-            }
+        char *title_property = NULL;
+        char *title = NULL;
+        XFetchName(state->xdisplay, client, &title_property);
+        if (title_property != NULL) {
+            g_strstrip(title_property);
+            if (title_property[0] != '\0') title = g_strdup(title_property);
+            XFree(title_property);
+            title_property = NULL;
         }
-        if (name == NULL && have_class) {
-            const char *fallback =
-                class_hint.res_name != NULL && class_hint.res_name[0] != '\0'
-                    ? class_hint.res_name : class_hint.res_class;
+        char *app_name = NULL;
+        if (have_class) {
+            const char *fallback = class_hint.res_name;
+            if (fallback == NULL || fallback[0] == '\0') {
+                fallback = class_hint.res_class;
+            }
             if (fallback != NULL && fallback[0] != '\0') {
-                name = g_strdup(fallback);
+                app_name = g_strdup(fallback);
             }
         }
+        if (app_name == NULL) app_name = g_strdup("App");
+        if (title == NULL) title = g_strdup(app_name);
         if (have_class) {
             if (class_hint.res_name != NULL) XFree(class_hint.res_name);
             if (class_hint.res_class != NULL) XFree(class_hint.res_class);
         }
-        if (name == NULL || name[0] == '\0' ||
-            strstr(name, "ZIRARCH") != NULL ||
-            strstr(name, "FieldM") != NULL) {
-            if (name != NULL) XFree(name);
+        if (title == NULL || title[0] == '\0' ||
+            strstr(title, "ZIRARCH") != NULL ||
+            strstr(title, "FieldM") != NULL) {
+            g_free(app_name);
+            g_free(title);
             continue;
         }
         GtkWidget *row = gtk_list_box_row_new();
         gtk_widget_add_css_class(row, "recents-row");
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        GtkWidget *label = gtk_label_new(name);
-        gtk_widget_set_hexpand(label, TRUE);
+        GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        gtk_widget_set_hexpand(text, TRUE);
+        GtkWidget *app_label = gtk_label_new(app_name);
+        gtk_label_set_xalign(GTK_LABEL(app_label), 0.0f);
+        GtkWidget *title_label = gtk_label_new(title);
+        gtk_label_set_xalign(GTK_LABEL(title_label), 0.0f);
+        gtk_widget_add_css_class(app_label, "title-3");
+        gtk_widget_add_css_class(title_label, "muted");
+        gtk_box_append(GTK_BOX(text), app_label);
+        gtk_box_append(GTK_BOX(text), title_label);
         GtkWidget *close = gtk_button_new_with_label("X");
         gtk_widget_set_size_request(close, 64, 64);
         g_signal_connect(close, "clicked",
                          G_CALLBACK(recents_close_one), state);
         g_object_set_data(G_OBJECT(close), "x-window",
                           GUINT_TO_POINTER((guint)client));
-        gtk_box_append(GTK_BOX(box), label);
+        gtk_box_append(GTK_BOX(box), text);
         gtk_box_append(GTK_BOX(box), close);
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
         g_object_set_data(G_OBJECT(row), "x-window",
                           GUINT_TO_POINTER((guint)client));
         gtk_list_box_append(GTK_LIST_BOX(list), row);
-        XFree(name);
+        ++recents_count;
+        g_free(app_name);
+        g_free(title);
+    }
+    if (recents_count == 0) {
+        GtkWidget *empty = gtk_list_box_row_new();
+        gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(empty), FALSE);
+        gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(empty), FALSE);
+        GtkWidget *label = gtk_label_new("No open apps");
+        gtk_widget_set_margin_top(label, 24);
+        gtk_widget_set_margin_bottom(label, 24);
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(empty), label);
+        gtk_list_box_append(GTK_LIST_BOX(list), empty);
     }
     XFree(clients);
     gtk_widget_set_visible(state->recents, TRUE);
@@ -882,6 +928,27 @@ static void quick_theme_clicked(GtkButton *button, gpointer data)
     gtk_button_set_label(button, state->dark_theme ? "Theme\nDark" : "Theme\nLight");
 }
 
+static void quick_power_clicked(GtkButton *button, gpointer data)
+{
+    (void)data;
+    char mode[32] = "normal";
+    FILE *file = fopen("/var/lib/zirarch/power-mode", "r");
+    if (file != NULL) {
+        fscanf(file, "%31s", mode);
+        fclose(file);
+    }
+    const char *next = strcmp(mode, "normal") == 0 ? "medium"
+                     : strcmp(mode, "medium") == 0 ? "extreme" : "normal";
+    char *arguments[] = {(char *)"/usr/bin/zirarch-power",
+                         (char *)next, NULL};
+    g_spawn_async(NULL, arguments, NULL, G_SPAWN_DEFAULT,
+                  NULL, NULL, NULL, NULL);
+    gtk_button_set_label(button, strcmp(next, "normal") == 0
+                                     ? "Power\nNormal"
+                                     : strcmp(next, "medium") == 0
+                                     ? "Power\nMedium" : "Power\nExtreme");
+}
+
 static void quick_brightness_changed(GtkRange *range, gpointer data)
 {
     int brightness = (int)(gtk_range_get_value(range) * 134.0 / 100.0);
@@ -926,19 +993,23 @@ static GtkWidget *make_quick_settings(ShellState *state)
     GtkWidget *gear = gtk_button_new_with_label("Settings");
     GtkWidget *theme = gtk_button_new_with_label(
         state->dark_theme ? "Theme\nDark" : "Theme\nLight");
+    GtkWidget *power = gtk_button_new_with_label("Power\nNormal");
     gtk_widget_set_size_request(wifi, 150, 104);
     gtk_widget_set_size_request(keyboard, 150, 104);
     gtk_widget_set_size_request(gear, 150, 104);
     gtk_widget_set_size_request(theme, 150, 104);
+    gtk_widget_set_size_request(power, 150, 104);
     gtk_grid_attach(GTK_GRID(tiles), wifi, 0, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(tiles), keyboard, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(tiles), gear, 2, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(tiles), theme, 3, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(tiles), power, 0, 1, 1, 1);
     g_signal_connect(wifi, "clicked", G_CALLBACK(quick_wifi_clicked), state);
     g_signal_connect(keyboard, "clicked",
                      G_CALLBACK(quick_keyboard_clicked), state);
     g_signal_connect(gear, "clicked", G_CALLBACK(quick_gear_clicked), state);
     g_signal_connect(theme, "clicked", G_CALLBACK(quick_theme_clicked), state);
+    g_signal_connect(power, "clicked", G_CALLBACK(quick_power_clicked), state);
     gtk_box_append(GTK_BOX(page), tiles);
     GtkWidget *brightness_label = gtk_label_new("Brightness");
     gtk_label_set_xalign(GTK_LABEL(brightness_label), 0.0f);
@@ -955,6 +1026,20 @@ static GtkWidget *make_quick_settings(ShellState *state)
     gtk_widget_add_css_class(battery, "muted");
     gtk_widget_set_halign(battery, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(page), battery);
+    GtkWidget *notifications = gtk_label_new("Notifications");
+    gtk_widget_add_css_class(notifications, "muted");
+    gtk_label_set_xalign(GTK_LABEL(notifications), 0.0f);
+    char *notification_text = NULL;
+    gsize notification_length = 0;
+    if (g_file_get_contents("/run/fieldm-notifications.tsv",
+                             &notification_text,
+                             &notification_length, NULL) &&
+        notification_length > 0) {
+        gtk_label_set_text(GTK_LABEL(notifications), notification_text);
+    }
+    g_free(notification_text);
+    gtk_widget_set_halign(notifications, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(page), notifications);
     GtkGesture *swipe = gtk_gesture_swipe_new();
     g_signal_connect(swipe, "swipe", G_CALLBACK(quick_page_swiped), state);
     gtk_widget_add_controller(page, GTK_EVENT_CONTROLLER(swipe));
@@ -990,20 +1075,6 @@ static GtkWidget *make_home_page(ShellState *state)
     gtk_label_set_xalign(GTK_LABEL(state->home_date), 0.0f);
     gtk_box_append(GTK_BOX(page), state->home_clock);
     gtk_box_append(GTK_BOX(page), state->home_date);
-    state->home_pinned_title = gtk_label_new("Pinned");
-    gtk_widget_add_css_class(state->home_pinned_title, "title-2");
-    gtk_label_set_xalign(GTK_LABEL(state->home_pinned_title), 0.0f);
-    gtk_box_append(GTK_BOX(page), state->home_pinned_title);
-    GtkWidget *pinned_scroll = gtk_scrolled_window_new();
-    state->home_pinned_scroll = pinned_scroll;
-    gtk_widget_set_vexpand(pinned_scroll, TRUE);
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
-    state->home_grid = grid;
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(pinned_scroll), grid);
-    gtk_box_append(GTK_BOX(page), pinned_scroll);
-    render_home_grid(state);
     GtkWidget *dock = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     gtk_box_set_homogeneous(GTK_BOX(dock), TRUE);
     gtk_widget_add_css_class(dock, "home-dock");

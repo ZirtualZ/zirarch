@@ -4,9 +4,12 @@ set -u
 state_dir=/run/fieldm-keyboard
 pidfile="$state_dir/pid"
 logfile=/var/log/fieldm-keyboard.log
+lockfile="$state_dir/lock"
 mkdir -p "$state_dir"
 touch "$logfile"
 exec >>"$logfile" 2>&1
+exec 9>"$lockfile"
+flock 9 2>/dev/null || :
 DISPLAY=${DISPLAY:-:0}
 export DISPLAY
 
@@ -45,13 +48,17 @@ sync_terminal_state()
 	keyboard_pid || return 0
 	read -r pid < "$pidfile"
 	kill -HUP "$pid" 2>/dev/null || :
-	[ -e "$state_dir/terminal" ] &&
-		kill -USR1 "$pid" 2>/dev/null || kill -USR2 "$pid" 2>/dev/null || :
+	if [ -e "$state_dir/terminal" ]; then
+		kill -USR1 "$pid" 2>/dev/null || :
+	else
+		kill -USR2 "$pid" 2>/dev/null || :
+	fi
 }
 
 start_keyboard()
 {
 	rm -f "$pidfile"
+	exec 9>&-
 	if command -v fieldm-kbd >/dev/null 2>&1; then
 		fieldm-kbd &
 	elif command -v svkbd-mobile-intl >/dev/null 2>&1; then
@@ -73,6 +80,16 @@ stop_keyboard()
 		kill "$pid" 2>/dev/null || :
 	fi
 	rm -f "$pidfile"
+	for proc in /proc/[0-9]*; do
+		pid=${proc#/proc/}
+		[ "$pid" = "$$" ] && continue
+		cmd=$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null) || continue
+		case "$cmd" in
+			*"fieldm-kbd"*|*"svkbd-mobile-intl"*|*"svkbd"*)
+				kill "$pid" 2>/dev/null || :
+				;;
+		esac
+	done
 }
 
 reconcile()
