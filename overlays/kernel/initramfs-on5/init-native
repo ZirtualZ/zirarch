@@ -30,6 +30,25 @@ wait_for_device()
 "$BB" mount -t devpts devpts /dev/pts 2>/dev/null || true
 "$BB" echo 0 > /sys/fs/selinux/enforce 2>/dev/null || true
 
+BOOT_START=$("$BB" cut -d. -f1 /proc/uptime)
+"$BB" echo 1 > /sys/class/firmware/timeout 2>/dev/null || true
+"$BB" echo 0 > /sys/module/rng_core/parameters/current_quality \
+	2>/dev/null || true
+if [ -L /sys/bus/platform/drivers/exyswd_rng/exyswd_rng ]; then
+	"$BB" echo exyswd_rng > \
+		/sys/bus/platform/drivers/exyswd_rng/unbind 2>/dev/null || true
+fi
+"$BB" echo 0 > /sys/class/graphics/fbcon/cursor_blink \
+	2>/dev/null || true
+"$BB" printf '\033[?25l' > /dev/tty0 2>/dev/null || true
+
+remaining=20
+while [ ! -e /dev/fb0 ] && [ "$remaining" -gt 0 ]; do
+	"$BB" sleep 0.1
+	remaining=$((remaining - 1))
+done
+/bin/initfb 2>/dev/null || true
+
 gadget=/sys/class/android_usb/android0
 tries=50
 while [ ! -d "$gadget" ] && [ "$tries" -gt 0 ]; do
@@ -61,8 +80,24 @@ wait_for_device "$SYSTEM_DEVICE" || rescue "SYSTEM device did not appear."
 	rescue "Could not mount SYSTEM at /newroot."
 [ -x /newroot/sbin/init ] || rescue "Missing /newroot/sbin/init."
 
+"$BB" mkdir -p /newroot/var/log
+"$BB" dmesg > /newroot/var/log/boot-dmesg.log 2>/dev/null || true
+{
+	"$BB" echo "initramfs_start=$BOOT_START"
+	"$BB" echo "root_mounted=$("$BB" cut -d. -f1 /proc/uptime)"
+	"$BB" echo "entropy_avail=$("$BB" cat /proc/sys/kernel/random/entropy_avail)"
+	"$BB" echo "firmware_timeout=$("$BB" cat /sys/class/firmware/timeout)"
+	"$BB" echo "hwrng_current=$("$BB" cat /sys/class/misc/hw_random/rng_current 2>/dev/null || "$BB" echo none)"
+} > /newroot/var/log/zirarch-boot-timing.log
+"$BB" chmod 640 /newroot/var/log/boot-dmesg.log \
+	/newroot/var/log/zirarch-boot-timing.log 2>/dev/null || true
+
 "$BB" mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run
+"$BB" echo 1 > /newroot/run/zirarch-early-dmesg-captured
 "$BB" mount -o move /dev /newroot/dev || rescue "Could not move /dev."
 "$BB" mount -o move /proc /newroot/proc || rescue "Could not move /proc."
 "$BB" mount -o move /sys /newroot/sys || rescue "Could not move /sys."
+OPENRC_START=$("$BB" cut -d. -f1 /proc/uptime)
+"$BB" echo "openrc_start=$OPENRC_START" \
+	>> /newroot/var/log/zirarch-boot-timing.log 2>/dev/null || true
 exec "$BB" switch_root /newroot /sbin/init

@@ -1,0 +1,34 @@
+#!/sbin/openrc-run
+
+description="Capture and tune Zirarch early boot"
+
+depend()
+{
+	after procfs sysfs
+	before '*'
+}
+
+start()
+{
+	echo 1 > /sys/class/firmware/timeout 2>/dev/null || true
+	echo 0 > /sys/module/rng_core/parameters/current_quality \
+		2>/dev/null || true
+	if [ -L /sys/bus/platform/drivers/exyswd_rng/exyswd_rng ]; then
+		echo exyswd_rng > /sys/bus/platform/drivers/exyswd_rng/unbind \
+			2>/dev/null || true
+	fi
+	echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true
+	mkdir -p /var/log
+	if [ ! -s /run/zirarch-early-dmesg-captured ]; then
+		dmesg > /var/log/boot-dmesg.log
+		chmod 640 /var/log/boot-dmesg.log
+		: > /var/log/zirarch-boot-timing.log
+		echo 1 > /run/zirarch-early-dmesg-captured
+	fi
+	{
+		echo "zirarch-early-boot uptime=$(cut -d. -f1 /proc/uptime)"
+		echo "entropy_avail=$(cat /proc/sys/kernel/random/entropy_avail)"
+		echo "firmware_timeout=$(cat /sys/class/firmware/timeout)"
+		echo "hwrng_current=$(cat /sys/class/misc/hw_random/rng_current 2>/dev/null || echo none)"
+	} >> /var/log/zirarch-boot-timing.log
+}

@@ -1,0 +1,23 @@
+#!/sbin/openrc-run
+
+description="Zirarch early userspace entropy generator"
+command="/usr/sbin/haveged"
+command_args="-F -w 1024"
+command_background=true
+pidfile="/run/zirarch-haveged.pid"
+
+depend()
+{
+	need zirarch-early-boot
+	after zirarch-early-boot
+	before dbus elogind zramswap zirarch-sshd urandom
+}
+
+start_post()
+{
+	sleep 0.1
+	{
+		echo "haveged uptime=$(cut -d. -f1 /proc/uptime)"
+		echo "entropy_avail=$(cat /proc/sys/kernel/random/entropy_avail)"
+	} >> /var/log/zirarch-boot-timing.log
+}
