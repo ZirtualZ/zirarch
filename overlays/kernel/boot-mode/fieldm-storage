@@ -45,14 +45,17 @@ use_sd()
 	mount -t ext4 -o noatime LABEL=zirarch-sd /mnt/zirarch-sd ||
 		exit 1
 	mkdir -p /mnt/zirarch-sd/root-data
-	# Copy existing app/file state once; bind it below while preserving SYSTEM.
+	# Copy existing app/file state once. Never bind unless the destination
+	# has the SSH guard so a missing SD cannot hide the system root.
+	[ -f /root/.ssh/authorized_keys ] ||
+		[ -f /mnt/zirarch-sd/root-data/.ssh/authorized_keys ] ||
+		{ echo "refusing SD root bind: SSH guard missing" >&2; exit 1; }
 	tar -C /root -cf - . |
 		tar -C /mnt/zirarch-sd/root-data -xf -
-	mount --bind /mnt/zirarch-sd/root-data /root
 	mkdir -p /root/.config/fieldm
 	printf 'microsd\n' >/root/.config/fieldm/storage-location
 	grep -v '^LABEL=zirarch-sd' /etc/fstab >/tmp/fstab.fieldm 2>/dev/null || :
-	printf 'LABEL=zirarch-sd /mnt/zirarch-sd ext4 defaults,noatime 0 2\n/mnt/zirarch-sd/root-data /root none bind 0 0\n' \
+	printf 'LABEL=zirarch-sd /mnt/zirarch-sd ext4 defaults,nofail,noatime 0 2\n' \
 		>>/tmp/fstab.fieldm
 	mv /tmp/fstab.fieldm /etc/fstab
 }

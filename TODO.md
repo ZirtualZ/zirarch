@@ -8,4 +8,4 @@
 7. Browser/lock stale-process cause was identified and test PIDs removed; no image or partition write was performed.
 8. Remaining hardware-interactive checks: audio, vibration, sensors, cameras and 30-minute drain samples are untested.
 9. A cold-boot timing sample and rebuilt-image boot test are untested; no log_buf_len or cursor cmdline change was applied.
-10. Browser/file-manager closes verified live. Remaining new prompt work: timezone direct apply verified; boot prompt removed; USERDATA p21 formatted and bind-mounted; microSD absent/detection untested; SD-root initramfs prepared but not built/flashed.
+10. Bind safety: live `/root/.ssh` guard proved; fstab has no bind lines; guarded OpenRC service restored USERDATA binds only with key present. SD `/root` binds stay in the guarded service. Initramfs SD fallback uses BusyBox label parsing and p19 fallback. Volume Down uses EVIOCGKEY and was live-tested held/released.

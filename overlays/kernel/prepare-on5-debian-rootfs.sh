@@ -174,6 +174,10 @@ install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode.initd" \
 	"$ROOT_DIR/etc/init.d/zirarch-boot-mode"
 install -m 755 "$KERNEL_DIR/boot-mode/zirarch-boot-mode" \
 	"$ROOT_DIR/usr/bin/zirarch-boot-mode"
+cp -a "$KERNEL_DIR/boot-mode/zirarch-volume-down.c" \
+	"$ROOT_DIR/usr/src/zirarch/zirarch-volume-down.c"
+chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
+	/usr/bin/zirarch-volume-down /usr/src/zirarch/zirarch-volume-down.c
 install -m 755 "$PROJECT_DIR/FieldM/scripts/fieldm-hwprobe" \
 	"$ROOT_DIR/usr/lib/fieldm/hwprobe"
 install -m 755 "$PROJECT_DIR/FieldM/scripts/zirarch-post" \
@@ -184,6 +188,8 @@ install -m 755 "$KERNEL_DIR/boot-mode/fieldm-desktop-launch" \
 	"$ROOT_DIR/usr/bin/fieldm-desktop-launch"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-keyboard" \
 	"$ROOT_DIR/usr/bin/fieldm-keyboard"
+install -m 755 "$KERNEL_DIR/boot-mode/fieldm-bind-mounts.initd" \
+	"$ROOT_DIR/etc/init.d/fieldm-bind-mounts"
 install -m 755 "$KERNEL_DIR/boot-mode/fieldm-storage" \
 	"$ROOT_DIR/usr/bin/fieldm-storage"
 chroot "$ROOT_DIR" /usr/bin/cc -O2 -Wall -Wextra -std=c11 -o \
@@ -259,11 +265,7 @@ nameserver 8.8.8.8
 EOF
 cat > "$ROOT_DIR/etc/fstab" <<'EOF'
 LABEL=SYSTEM / ext4 rw,relatime,errors=remount-ro 0 0
-LABEL=zirarch-data /data ext4 defaults,noatime 0 2
-/data/root /root none bind 0 0
-/data/apt-cache /var/cache/apt none bind 0 0
-/data/app-data /var/lib/zirarch none bind 0 0
-/data/fieldm /var/lib/fieldm none bind 0 0
+LABEL=zirarch-data /data ext4 defaults,nofail,noatime 0 2
 proc /proc proc defaults 0 0
 sysfs /sys sysfs defaults 0 0
 devpts /dev/pts devpts gid=5,mode=620 0 0
@@ -536,6 +538,7 @@ for service in bootmisc hostname hwclock fake-hwclock localmount modules root sy
 		chroot "$ROOT_DIR" /sbin/rc-update add "$service" boot
 done
 chroot "$ROOT_DIR" /sbin/rc-update add zirarch-power boot
+chroot "$ROOT_DIR" /sbin/rc-update add fieldm-bind-mounts boot
 for runlevel in $(find "$ROOT_DIR/etc/runlevels" -mindepth 1 -maxdepth 1 \
 	-type d -printf '%f '); do
 	chroot "$ROOT_DIR" /sbin/rc-update del ssh "$runlevel" 2>/dev/null || true

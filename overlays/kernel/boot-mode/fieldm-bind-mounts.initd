@@ -1,0 +1,48 @@
+#!/sbin/openrc-run
+
+description="Guarded Zirarch USERDATA and app-data bind mounts"
+
+depend()
+{
+	before sshd zirarch-sshd fieldm-keys
+}
+
+start()
+{
+	mkdir -p /data
+	mountpoint -q /root && umount -l /root
+	mountpoint -q /var/cache/apt && umount -l /var/cache/apt
+	mountpoint -q /var/lib/zirarch && umount -l /var/lib/zirarch
+	mountpoint -q /var/lib/fieldm && umount -l /var/lib/fieldm
+	if ! mountpoint -q /data; then
+		mount LABEL=zirarch-data /data 2>/dev/null || {
+			echo "fieldm-bind-mounts: /data unavailable; skipping binds"
+			return 0
+		}
+	fi
+	[ -f /data/root/.ssh/authorized_keys ] || {
+		echo "fieldm-bind-mounts: /data/root SSH guard missing; skipping root bind"
+		return 0
+	}
+
+	mkdir -p /data/root /data/apt-cache /data/app-data /data/fieldm
+	mountpoint -q /root || mount --bind /data/root /root
+	mountpoint -q /var/cache/apt || mount --bind /data/apt-cache /var/cache/apt
+	mountpoint -q /var/lib/zirarch || mount --bind /data/app-data /var/lib/zirarch
+	mountpoint -q /var/lib/fieldm || mount --bind /data/fieldm /var/lib/fieldm
+
+	if [ -f /data/root/.config/fieldm/storage-location ] &&
+	   grep -qx microsd /data/root/.config/fieldm/storage-location; then
+		mkdir -p /mnt/zirarch-sd
+		if mountpoint -q /mnt/zirarch-sd ||
+		   mount -t ext4 -o nofail,noatime LABEL=zirarch-sd /mnt/zirarch-sd 2>/dev/null; then
+			if [ -f /mnt/zirarch-sd/root-data/.ssh/authorized_keys ]; then
+				mountpoint -q /root && umount -l /root
+				mount --bind /mnt/zirarch-sd/root-data /root
+			else
+				echo "fieldm-bind-mounts: microSD SSH guard missing; keeping USERDATA root"
+			fi
+		fi
+	fi
+	eend 0
+}
