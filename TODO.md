@@ -10,6 +10,21 @@ treated as a usable daily interface. It is deliberately ordered:
 5. improve information architecture and visual design;
 6. modernize and package the system for a maintainable release.
 
+## Implementation status — 2026-11-27
+
+- **Completed:** Phase 0.1–0.3 and Phase 1.1–1.4 implementation work is in
+  place, with live ARM binaries and supervisor scripts deployed to the
+  SM-G550T for smoke testing.
+- **Live baseline:** the device is in GUI mode with Xorg, `simple-wm`,
+  `simple-desktop`, `fieldm-kbd`, and `fieldm-keys` running.
+- **Live deployment:** `scripts/live-deploy.sh` builds the FieldM C binaries
+  directly on the ARM phone, preserves target-side backups, verifies SHA-256
+  checksums, replaces only live FieldM binaries/scripts, and supports
+  `--rollback`. It never writes BOOT or SYSTEM partitions.
+- **Remaining:** hardware acceptance tests, repeated kill/restart tests,
+  100-event hardware-key matrices, touchscreen real-tap tests, and any
+  follow-up fixes found by live use remain open.
+
 Do not skip directly to visual polish. A redesigned unstable system is still
 unstable. Each phase should end with a short live-device check and a rollback
 path. Partition flashing is not part of routine implementation or testing.
@@ -82,6 +97,9 @@ The largest instability risks are currently architectural rather than cosmetic:
 **Acceptance:** after an SSH deploy, a bad FieldM binary can be replaced and
 restarted within minutes without reflashing.
 
+**Status:** Implemented for live binaries. The deployment script builds ARM
+code on the phone and uses target-side backups and checksum verification.
+
 ## Step 0.2: Add a deployment manifest
 
 - Generate host-side SHA-256 values for every deployed binary and script.
@@ -95,6 +113,10 @@ restarted within minutes without reflashing.
 **Acceptance:** every live issue can be correlated with an exact deployed
 build and an exact previous build.
 
+**Status:** Implemented in `scripts/live-deploy.sh`; host and target SHA-256
+data is written under ignored `builds/live-deploy/` and rollback backups are
+stored outside the repository on the phone.
+
 ## Step 0.3: Define explicit hardware recovery
 
 - Document Power, Back, Home, Recents/Menu, Volume Up, and Volume Down behavior.
@@ -105,6 +127,9 @@ build and an exact previous build.
 
 **Acceptance:** three emergency restart tests pass while an app is open, while
 the keyboard is visible, and while the device is blanked.
+
+**Status:** Hardware handling, monotonic chord timing, blanking, and emergency
+session restart are implemented. Repeated live acceptance tests remain open.
 
 ---
 
@@ -127,6 +152,10 @@ Replace "start and hope" behavior in `fieldm-session`,
 process is recovered or clearly reported instead of entering a hidden reboot
 loop.
 
+**Status:** Implemented bounded restart, recovery state, component-specific
+restart, PID/exit logging, and 5-failure/300-second limits. Live fault
+injection remains open.
+
 ## Step 1.2: Harden `fieldm-keys`
 
 Audit `fieldm-keys.c` against these invariants:
@@ -147,6 +176,11 @@ Audit `fieldm-keys.c` against these invariants:
 **Acceptance:** hold/release combinations produce deterministic actions in a
 repeatable 100-event test matrix.
 
+**Status:** Implemented release-only Power/Volume behavior, monotonic timing,
+repeat suppression, hotplug reopening, child reaping, bounded logging,
+touchscreen grab lifecycle, and blank-state brightness restoration.
+The 100-event matrix remains open.
+
 ## Step 1.3: Repair touchscreen blanking
 
 - Confirm `/dev/input/event1` is the same physical touch event used by Xorg.
@@ -158,6 +192,9 @@ repeatable 100-event test matrix.
 
 **Acceptance:** no app or shell control is activated while the screen is
 blanked.
+
+**Status:** Implemented release-before-unblank, stale-touch draining, and
+touchscreen `EVIOCGRAB` scope. Real-tap confirmation remains open.
 
 ## Step 1.4: Make emergency restart atomic enough to recover
 
@@ -171,6 +208,10 @@ blanked.
 
 **Acceptance:** the emergency chord passes repeated app-open and keyboard-open
 tests and leaves no stale Xorg/WM/processes.
+
+**Status:** Implemented lease clearing, descendant termination,
+SIGTERM/SIGKILL bounds, Xorg verification, boot-mode restart, and
+`fieldm-keys` process preservation. Repeated live acceptance tests remain open.
 
 ---
 
