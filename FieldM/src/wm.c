@@ -1127,6 +1127,22 @@ static void expire_pending_closes(void)
     shrink_pending_close_capacity();
 }
 
+static void prune_missing_clients(void)
+{
+    for (int i = 0; i < client_count;) {
+        XWindowAttributes attributes;
+        if (XGetWindowAttributes(display, clients[i].client, &attributes)) {
+            ++i;
+            continue;
+        }
+        fprintf(stderr,
+                "simple-wm: pruning missing client 0x%lx\n",
+                clients[i].client);
+        cancel_pending_close(clients[i].client);
+        forget_client(i);
+    }
+}
+
 static void close_client(int index)
 {
     if (index < 0 || index >= client_count) return;
@@ -1536,6 +1552,29 @@ int main(int argc, char **argv)
     taskbar_enabled = taskbar_preference_from_root();
     sync_taskbars();
 
+    Window root_return, parent_return, *existing_children = NULL;
+    unsigned int existing_count = 0;
+    if (XQueryTree(display, root, &root_return, &parent_return,
+                   &existing_children, &existing_count)) {
+        for (unsigned int i = 0; i < existing_count; ++i) {
+            XWindowAttributes attributes;
+            if (!XGetWindowAttributes(display, existing_children[i],
+                                      &attributes) ||
+                attributes.override_redirect ||
+                attributes.map_state != IsViewable) {
+                continue;
+            }
+            if (existing_children[i] == taskbar_window ||
+                client_is_keyboard(existing_children[i])) {
+                continue;
+            }
+            manage_window(existing_children[i]);
+        }
+        if (existing_children != NULL) {
+            XFree(existing_children);
+        }
+    }
+
     XEvent event;
     Window moving_frame = None;
     int drag_mode = 0;
@@ -1558,6 +1597,7 @@ int main(int argc, char **argv)
             }
         }
         expire_pending_closes();
+        prune_missing_clients();
         if (XPending(display) == 0) {
             continue;
         }

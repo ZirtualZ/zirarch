@@ -16,6 +16,10 @@
 #include <unistd.h>
 
 enum { MAX_EXEC_ARGUMENTS = 64 };
+enum { MAX_LAUNCH_CHILDREN = 128 };
+
+static pid_t launch_children[MAX_LAUNCH_CHILDREN];
+static size_t launch_child_count;
 
 static char *trim(char *text)
 {
@@ -535,7 +539,26 @@ static int launch_arguments(char **arguments, const char *display_size)
         perror("Could not start application");
         return 0;
     }
+    if (launch_child_count < MAX_LAUNCH_CHILDREN) {
+        launch_children[launch_child_count++] = child;
+    }
     return 1;
+}
+
+void applications_reap_children(void)
+{
+    for (size_t i = 0; i < launch_child_count;) {
+        int status;
+        pid_t child = waitpid(launch_children[i], &status, WNOHANG);
+        if (child != launch_children[i]) {
+            ++i;
+            continue;
+        }
+        for (size_t j = i + 1; j < launch_child_count; ++j) {
+            launch_children[j - 1] = launch_children[j];
+        }
+        --launch_child_count;
+    }
 }
 
 int application_launch(const Application *application)
@@ -657,7 +680,13 @@ int application_launch_with_catalog(const Application *application,
             }
         }
         if (!has_url) {
-            arguments[argument_count++] = (char *)"about:blank";
+            arguments[argument_count] = strdup("about:blank");
+            if (arguments[argument_count] == NULL) {
+                fprintf(stderr, "Could not allocate NetSurf startup URL.\n");
+                free_arguments(arguments, argument_count);
+                return 0;
+            }
+            ++argument_count;
             arguments[argument_count] = NULL;
         }
     }

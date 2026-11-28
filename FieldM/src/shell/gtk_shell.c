@@ -35,6 +35,13 @@ void shell_update_styles(ShellState *state)
     fprintf(stderr, "Could not find FieldM stylesheet: %s\n", path);
 }
 
+static gboolean reap_application_children(gpointer data)
+{
+    (void)data;
+    applications_reap_children();
+    return G_SOURCE_CONTINUE;
+}
+
 static void settings_path(char *path, size_t size)
 {
     const char *home = getenv("HOME");
@@ -450,6 +457,9 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
     g_signal_connect(application, "activate",
                      G_CALLBACK(application_activate), state);
     char *gtk_argv[] = {argv[0], NULL};
+    state->reap_source = g_timeout_add_seconds(1,
+                                               reap_application_children,
+                                               state);
     int result = g_application_run(G_APPLICATION(application), 1, gtk_argv);
 
     if (state->x_source != 0) {
@@ -463,6 +473,9 @@ int gtk_shell_run(int argc, char **argv, pid_t window_manager)
     }
     if (state->status_source != 0) {
         g_source_remove(state->status_source);
+    }
+    if (state->reap_source != 0) {
+        g_source_remove(state->reap_source);
     }
     if (state->status_wifi_process != NULL) {
         g_object_unref(state->status_wifi_process);

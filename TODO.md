@@ -901,8 +901,14 @@ mystery freezes.
 recognized explicitly in FieldM browser launch/fallback logic. Browser
 windows are classified as text contexts so the on-screen keyboard can be
 started; launching no-URL NetSurf now supplies `about:blank` instead of
-exiting with `BadURL`. Live open/close smoke tests pass, while text-entry,
-scrolling, zoom, and screenshot tests remain.
+exiting with `BadURL`. Fixed startup adoption for already-mapped browser
+windows so a restarted window manager cannot leave NetSurf unmanaged.
+Fixed browser URL argument ownership to avoid freeing a string literal.
+Added stale-client pruning and tracked app-child reaping. A live 30-second
+Browser stability test passed with the shell PID unchanged and NetSurf
+framed within the 720x1280 work area; direct open/close no longer leaves
+NetSurf zombies. Text-entry, scrolling, zoom, and URL navigation remain to be
+verified interactively.
 
 ## Step 11.3: Package manager polish
 

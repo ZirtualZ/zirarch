@@ -81,6 +81,7 @@ typedef struct {
     guint x_source;
     guint wm_source;
     guint status_source;
+    guint reap_source;
     GtkWidget *status_network;
     GtkWidget *status_clock;
     GtkWidget *status_telemetry;

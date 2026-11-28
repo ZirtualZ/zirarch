@@ -28,6 +28,7 @@ typedef enum {
 } ApplicationKind;
 
 size_t applications_load(Application *applications, size_t capacity);
+void applications_reap_children(void);
 int application_load_desktop_file(const char *path, Application *application,
                                   int allow_no_display);
 int application_matches(const Application *application, const char *query);
